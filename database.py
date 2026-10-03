@@ -5,20 +5,11 @@ from datetime import datetime
 DB_NAME = "news.db"
 
 
-# =========================================================
-# DATABASE CONNECTION
-# =========================================================
-
 def get_connection():
     return sqlite3.connect(DB_NAME)
 
 
-# =========================================================
-# INITIALIZE DATABASE
-# =========================================================
-
 def init_database():
-
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -39,12 +30,7 @@ def init_database():
     print("✅ Database initialized")
 
 
-# =========================================================
-# CHECK NEWS
-# =========================================================
-
 def news_already_sent(url):
-
     if not url:
         return False
 
@@ -52,11 +38,7 @@ def news_already_sent(url):
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT id
-        FROM sent_news
-        WHERE url = ?
-        """,
+        "SELECT id FROM sent_news WHERE url = ?",
         (url,)
     )
 
@@ -67,17 +49,7 @@ def news_already_sent(url):
     return result is not None
 
 
-# =========================================================
-# SAVE NEWS
-# =========================================================
-
-def save_sent_news(
-    url,
-    title,
-    source,
-    category
-):
-
+def save_sent_news(url, title, source, category):
     if not url:
         return
 
@@ -85,39 +57,28 @@ def save_sent_news(
     cursor = conn.cursor()
 
     try:
-
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO sent_news
             (url, title, source, category, sent_at)
             VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                title,
-                source,
-                category,
-                datetime.now().isoformat()
-            )
-        )
+        """, (
+            url,
+            title,
+            source,
+            category,
+            datetime.now().isoformat()
+        ))
 
         conn.commit()
 
     except sqlite3.IntegrityError:
-
         pass
 
     finally:
-
         conn.close()
 
 
-# =========================================================
-# COUNT SENT NEWS
-# =========================================================
-
 def get_sent_news_count():
-
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -129,27 +90,15 @@ def get_sent_news_count():
 
     conn.close()
 
-    if result:
-        return result[0]
+    return result[0] if result else 0
 
-    return 0
-
-
-# =========================================================
-# COUNT BY CATEGORY
-# =========================================================
 
 def get_category_count(category):
-
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        """
-        SELECT COUNT(*)
-        FROM sent_news
-        WHERE category = ?
-        """,
+        "SELECT COUNT(*) FROM sent_news WHERE category = ?",
         (category,)
     )
 
@@ -157,37 +106,39 @@ def get_category_count(category):
 
     conn.close()
 
-    if result:
-        return result[0]
+    return result[0] if result else 0
 
-    return 0
-
-
-# =========================================================
-# GET LATEST SENT NEWS
-# =========================================================
 
 def get_latest_sent_news(limit=5):
-
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            title,
-            source,
-            category,
-            sent_at
+    cursor.execute("""
+        SELECT title, source, category, sent_at
         FROM sent_news
         ORDER BY id DESC
         LIMIT ?
-        """,
-        (limit,)
-    )
+    """, (limit,))
 
     results = cursor.fetchall()
 
     conn.close()
 
     return results
+
+
+def clear_database():
+    """
+    Optional:
+    Use only if you want to reset sent-news history.
+    """
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM sent_news")
+
+    conn.commit()
+    conn.close()
+
+    print("🗑️ Database cleared")

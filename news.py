@@ -7,18 +7,15 @@ from email.utils import parsedate_to_datetime
 
 
 # =========================================================
+# KHMER NEWS 24
 # NEWS SOURCES
-# =========================================================
-#
-# Source មួយ error -> bot នៅតែបន្តប្រើ source ផ្សេង
-#
 # =========================================================
 
 NEWS_SOURCES = {
 
-    # -----------------------------------------------------
+    # =====================================================
     # FOOTBALL
-    # -----------------------------------------------------
+    # =====================================================
 
     "football": [
 
@@ -34,12 +31,41 @@ NEWS_SOURCES = {
             "priority": 2,
         },
 
+        {
+            "name": "CNA Sport",
+            "url": (
+                "https://www.channelnewsasia.com/"
+                "api/v1/rss-outbound-feed"
+                "?_format=xml&category=10296"
+            ),
+            "priority": 3,
+        },
+
+        {
+            "name": "Reuters Football",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Areuters.com+football"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 4,
+        },
+
+        {
+            "name": "AP Sports",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Aapnews.com+football"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 5,
+        },
     ],
 
 
-    # -----------------------------------------------------
-    # WORLD
-    # -----------------------------------------------------
+    # =====================================================
+    # WORLD / WAR
+    # =====================================================
 
     "war": [
 
@@ -55,12 +81,41 @@ NEWS_SOURCES = {
             "priority": 2,
         },
 
+        {
+            "name": "CNA World",
+            "url": (
+                "https://www.channelnewsasia.com/"
+                "api/v1/rss-outbound-feed"
+                "?_format=xml&category=6311"
+            ),
+            "priority": 3,
+        },
+
+        {
+            "name": "Reuters World",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Areuters.com+world+war+conflict"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 4,
+        },
+
+        {
+            "name": "AP World",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Aapnews.com+world+war+conflict"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 5,
+        },
     ],
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # POLITICS
-    # -----------------------------------------------------
+    # =====================================================
 
     "politics": [
 
@@ -71,22 +126,46 @@ NEWS_SOURCES = {
         },
 
         {
-            "name": "Al Jazeera",
+            "name": "Al Jazeera Politics",
             "url": "https://www.aljazeera.com/xml/rss/all.xml",
             "priority": 2,
         },
 
+        {
+            "name": "CNA Asia",
+            "url": (
+                "https://www.channelnewsasia.com/"
+                "api/v1/rss-outbound-feed"
+                "?_format=xml&category=6511"
+            ),
+            "priority": 3,
+        },
+
+        {
+            "name": "Reuters Politics",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Areuters.com+politics"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 4,
+        },
+
+        {
+            "name": "AP Politics",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Aapnews.com+politics"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 5,
+        },
     ],
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CAMBODIA
-    # -----------------------------------------------------
-    #
-    # VOA Khmer removed because its RSS endpoint
-    # returned EMPTY in our test.
-    #
-    # -----------------------------------------------------
+    # =====================================================
 
     "cambodia": [
 
@@ -94,11 +173,61 @@ NEWS_SOURCES = {
             "name": "Google News Cambodia",
             "url": (
                 "https://news.google.com/rss/search?"
-                "q=Cambodia&hl=en-US&gl=US&ceid=US:en"
+                "q=Cambodia"
+                "&hl=en-US&gl=US&ceid=US:en"
             ),
             "priority": 1,
         },
 
+        {
+            "name": "Reuters Cambodia",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Areuters.com+Cambodia"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 2,
+        },
+
+        {
+            "name": "AP Cambodia",
+            "url": (
+                "https://news.google.com/rss/search?"
+                "q=site%3Aapnews.com+Cambodia"
+                "&hl=en-US&gl=US&ceid=US:en"
+            ),
+            "priority": 3,
+        },
+
+        {
+            "name": "Kampuchea Thmey",
+            "url": "https://kampucheathmey.com/feed",
+            "priority": 4,
+        },
+
+        {
+            "name": "CEN",
+            "url": "https://cen.com.kh/feed",
+            "priority": 5,
+        },
+
+        {
+            "name": "DAP News",
+            "url": "https://dap-news.com/feed",
+            "priority": 6,
+        },
+
+        {
+            "name": "Khmer Breaking News",
+            "url": "https://kbn.news/feed",
+            "priority": 7,
+        },
+
+        {
+            "name": "AKP",
+            "url": "https://akp.gov.kh/feed",
+            "priority": 8,
+        },
     ],
 }
 
@@ -113,28 +242,39 @@ CATEGORY_KEYWORDS = {
 
         "football",
         "soccer",
-        "fifa",
-        "uefa",
-
         "premier league",
         "champions league",
+        "europa league",
+        "conference league",
+        "world cup",
+        "fifa",
+        "uefa",
+        "goal",
+        "match",
+        "manager",
+        "coach",
+        "transfer",
+        "player",
+        "club",
+        "league",
 
-        "la liga",
-        "serie a",
-        "bundesliga",
-        "ligue 1",
-
-        "manchester",
         "liverpool",
-        "chelsea",
         "arsenal",
-
-        "barcelona",
+        "chelsea",
+        "manchester united",
+        "manchester city",
         "real madrid",
+        "barcelona",
+        "bayern",
+        "psg",
+        "inter",
+        "milan",
+        "juventus",
 
-        "messi",
         "ronaldo",
-
+        "messi",
+        "mbappe",
+        "haaland",
     ],
 
 
@@ -143,36 +283,60 @@ CATEGORY_KEYWORDS = {
         "war",
         "conflict",
         "attack",
+        "airstrike",
         "missile",
         "military",
         "army",
-        "airstrike",
+        "troops",
+        "soldier",
+        "fighting",
         "ceasefire",
+        "bomb",
+        "bombing",
+        "drone",
 
         "iran",
         "israel",
         "gaza",
         "ukraine",
         "russia",
+        "nato",
+        "syria",
+        "lebanon",
+        "hezbollah",
+        "houthi",
 
         "middle east",
-
+        "defence",
+        "defense",
     ],
 
 
     "politics": [
 
+        "politics",
+        "political",
         "president",
         "prime minister",
         "government",
-        "election",
         "parliament",
-        "politics",
+        "election",
         "minister",
         "senate",
         "congress",
-        "political",
+        "party",
+        "vote",
+        "voting",
+        "legislation",
+        "law",
+        "policy",
 
+        "democrat",
+        "republican",
+
+        "government",
+        "diplomatic",
+        "diplomacy",
     ],
 
 
@@ -180,16 +344,35 @@ CATEGORY_KEYWORDS = {
 
         "cambodia",
         "cambodian",
+
         "phnom penh",
         "siem reap",
         "battambang",
         "banteay meanchey",
-        "preah vihear",
-        "oddar meanchey",
-        "kampot",
         "sihanoukville",
-        "khmer",
 
+        "kampong cham",
+        "kampot",
+        "kandal",
+        "takeo",
+        "prey veng",
+        "svay rieng",
+        "kratie",
+
+        "mondulkiri",
+        "ratanakiri",
+        "stung treng",
+        "preah vihear",
+        "koh kong",
+        "pursat",
+        "oddar meanchey",
+        "tbong khmum",
+        "kep",
+
+        "hun manet",
+        "royal government",
+        "national assembly",
+        "ministry",
     ],
 }
 
@@ -203,17 +386,14 @@ def clean_text(text):
     if not text:
         return ""
 
-    # Remove HTML tags
+    text = unescape(str(text))
+
     text = re.sub(
         r"<[^>]+>",
         " ",
         text
     )
 
-    # Convert HTML entities
-    text = unescape(text)
-
-    # Remove extra spaces
     text = re.sub(
         r"\s+",
         " ",
@@ -234,30 +414,16 @@ def normalize_url(url):
 
     url = url.strip()
 
-    # Remove common tracking parameters
-    tracking_parameters = (
-        "utm_source|"
-        "utm_medium|"
-        "utm_campaign|"
-        "utm_term|"
-        "utm_content|"
-        "gclid|"
-        "fbclid"
-    )
-
     url = re.sub(
-        rf"[?&](?:{tracking_parameters})=[^&]*",
+        r"[?&]"
+        r"(utm_source|utm_medium|utm_campaign|utm_term|utm_content)"
+        r"=[^&]*",
         "",
         url,
         flags=re.IGNORECASE
     )
 
-    # Remove trailing ? or &
-    url = url.rstrip(
-        "&?"
-    )
-
-    return url
+    return url.rstrip("/")
 
 
 # =========================================================
@@ -273,9 +439,8 @@ def normalize_title(title):
         title
     ).lower()
 
-    # Keep English, numbers and Khmer
     title = re.sub(
-        r"[^a-z0-9\u1780-\u17ff\s]",
+        r"[^\w\s]",
         " ",
         title
     )
@@ -290,118 +455,75 @@ def normalize_title(title):
 
 
 # =========================================================
-# DUPLICATE KEY
+# TIMESTAMP
 # =========================================================
 
-def make_duplicate_key(
-    title,
-    link
-):
+def get_published_timestamp(entry):
 
-    normalized_link = normalize_url(
-        link
-    )
+    try:
 
-    if normalized_link:
-
-        return (
-            "url:"
-            + normalized_link.lower()
-        )
-
-    return (
-        "title:"
-        + normalize_title(title)
-    )
-
-
-# =========================================================
-# GET PUBLISHED TIMESTAMP
-# =========================================================
-
-def get_published_timestamp(item):
-
-    # -----------------------------------------------------
-    # published_parsed
-    # -----------------------------------------------------
-
-    parsed_time = item.get(
-        "published_parsed"
-    )
-
-    if parsed_time:
-
-        try:
+        if getattr(
+            entry,
+            "published_parsed",
+            None
+        ):
 
             dt = datetime(
-                parsed_time.tm_year,
-                parsed_time.tm_mon,
-                parsed_time.tm_mday,
-                parsed_time.tm_hour,
-                parsed_time.tm_min,
-                parsed_time.tm_sec,
+                *entry.published_parsed[:6],
                 tzinfo=timezone.utc
             )
 
             return dt.timestamp()
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 
-    # -----------------------------------------------------
-    # updated_parsed
-    # -----------------------------------------------------
+    try:
 
-    parsed_time = item.get(
-        "updated_parsed"
-    )
-
-    if parsed_time:
-
-        try:
+        if getattr(
+            entry,
+            "updated_parsed",
+            None
+        ):
 
             dt = datetime(
-                parsed_time.tm_year,
-                parsed_time.tm_mon,
-                parsed_time.tm_mday,
-                parsed_time.tm_hour,
-                parsed_time.tm_min,
-                parsed_time.tm_sec,
+                *entry.updated_parsed[:6],
                 tzinfo=timezone.utc
             )
 
             return dt.timestamp()
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 
-    # -----------------------------------------------------
-    # Raw date
-    # -----------------------------------------------------
-
-    raw_date = (
-        item.get("published")
-        or item.get("updated")
-        or ""
-    )
-
-    if raw_date:
+    for field in [
+        "published",
+        "updated"
+    ]:
 
         try:
 
-            dt = parsedate_to_datetime(
-                raw_date
+            value = getattr(
+                entry,
+                field,
+                ""
             )
 
-            if dt.tzinfo is None:
+            if value:
 
-                dt = dt.replace(
-                    tzinfo=timezone.utc
+                dt = parsedate_to_datetime(
+                    value
                 )
 
-            return dt.timestamp()
+                if dt.tzinfo is None:
+
+                    dt = dt.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                return dt.timestamp()
 
         except Exception:
             pass
@@ -411,20 +533,87 @@ def get_published_timestamp(item):
 
 
 # =========================================================
-# GET PUBLISHED TEXT
+# PUBLISHED TEXT
 # =========================================================
 
-def get_published_text(item):
+def get_published_text(entry):
 
-    return (
-        item.get("published")
-        or item.get("updated")
-        or ""
+    value = getattr(
+        entry,
+        "published",
+        ""
     )
 
+    if value:
+        return clean_text(value)
+
+
+    value = getattr(
+        entry,
+        "updated",
+        ""
+    )
+
+    if value:
+        return clean_text(value)
+
+
+    return ""
+
 
 # =========================================================
-# CATEGORY RELEVANCE
+# ORIGINAL SOURCE
+# =========================================================
+
+def get_original_source(
+    entry,
+    default_source
+):
+
+    try:
+
+        source = getattr(
+            entry,
+            "source",
+            None
+        )
+
+        if source:
+
+            if isinstance(
+                source,
+                dict
+            ):
+
+                name = source.get(
+                    "title",
+                    ""
+                )
+
+            else:
+
+                name = getattr(
+                    source,
+                    "title",
+                    ""
+                )
+
+            name = clean_text(
+                name
+            )
+
+            if name:
+                return name
+
+    except Exception:
+        pass
+
+
+    return default_source
+
+
+# =========================================================
+# RELEVANCE
 # =========================================================
 
 def is_relevant(
@@ -434,46 +623,49 @@ def is_relevant(
     source_name
 ):
 
-    # -----------------------------------------------------
-    # Cambodia Google News feed
-    # is already Cambodia-focused
-    # -----------------------------------------------------
-
-    if category == "cambodia":
-
-        if source_name == "Google News Cambodia":
-
-            return True
-
-
     text = (
         f"{title} {summary}"
-        .lower()
-    )
+    ).lower()
+
+
+    # Google News Cambodia
+    # is already filtered.
+
+    if (
+        category == "cambodia"
+        and
+        (
+            "Cambodia" in source_name
+            or
+            "Reuters Cambodia" in source_name
+            or
+            "AP Cambodia" in source_name
+            or
+            "Google News" in source_name
+        )
+    ):
+
+        return True
+
 
     keywords = CATEGORY_KEYWORDS.get(
         category,
         []
     )
 
-    # If no keyword rules
-    if not keywords:
 
+    if not keywords:
         return True
 
 
-    for keyword in keywords:
-
-        if keyword.lower() in text:
-
-            return True
-
-
-    return False
+    return any(
+        keyword.lower() in text
+        for keyword in keywords
+    )
 
 
 # =========================================================
-# READ SOURCE
+# READ RSS SOURCE
 # =========================================================
 
 def read_source(
@@ -481,89 +673,53 @@ def read_source(
     category
 ):
 
+    articles = []
+
+
     source_name = source.get(
         "name",
         "Unknown"
     )
+
 
     source_url = source.get(
         "url",
         ""
     )
 
-    if not source_url:
 
-        print(
-            f"❌ No URL for {source_name}"
-        )
-
-        return []
+    priority = source.get(
+        "priority",
+        99
+    )
 
 
     try:
 
         print(
-            f"📰 Reading: "
-            f"{source_name}"
+            f"🔎 Reading: {source_name}"
         )
 
-
-        # -------------------------------------------------
-        # Parse RSS
-        # -------------------------------------------------
 
         feed = feedparser.parse(
             source_url
         )
 
 
-        # -------------------------------------------------
-        # Feed warning
-        # -------------------------------------------------
-
-        if getattr(
-            feed,
-            "bozo",
-            False
-        ):
+        if not feed.entries:
 
             print(
-                f"⚠️ Feed warning: "
-                f"{source_name}"
-            )
-
-
-        entries = getattr(
-            feed,
-            "entries",
-            []
-        )
-
-
-        # -------------------------------------------------
-        # Empty
-        # -------------------------------------------------
-
-        if not entries:
-
-            print(
-                f"🟡 {source_name} → EMPTY"
+                f"⚠️ EMPTY: {source_name}"
             )
 
             return []
 
 
-        articles = []
-
-
-        # -------------------------------------------------
-        # Read latest 20
-        # -------------------------------------------------
-
-        for item in entries[:20]:
+        for entry in feed.entries[:40]:
 
             title = clean_text(
-                item.get(
+                getattr(
+                    entry,
                     "title",
                     ""
                 )
@@ -571,52 +727,26 @@ def read_source(
 
 
             summary = clean_text(
-                item.get(
+                getattr(
+                    entry,
                     "summary",
-                    item.get(
-                        "description",
-                        ""
-                    )
+                    ""
                 )
             )
 
 
-            link = normalize_url(
-                item.get(
+            url = normalize_url(
+                getattr(
+                    entry,
                     "link",
                     ""
                 )
             )
 
 
-            published = (
-                get_published_text(
-                    item
-                )
-            )
-
-
-            timestamp = (
-                get_published_timestamp(
-                    item
-                )
-            )
-
-
-            # -------------------------------------------------
-            # Skip invalid article
-            # -------------------------------------------------
-
-            if not title:
+            if not title or not url:
                 continue
 
-            if not link:
-                continue
-
-
-            # -------------------------------------------------
-            # Relevance filter
-            # -------------------------------------------------
 
             if not is_relevant(
                 title,
@@ -628,52 +758,71 @@ def read_source(
                 continue
 
 
-            # -------------------------------------------------
-            # Article object
-            # -------------------------------------------------
+            timestamp = (
+                get_published_timestamp(
+                    entry
+                )
+            )
 
-            articles.append({
+
+            published = (
+                get_published_text(
+                    entry
+                )
+            )
+
+
+            original_source = (
+                get_original_source(
+                    entry,
+                    source_name
+                )
+            )
+
+
+            article = {
 
                 "title": title,
 
                 "summary": summary,
 
-                "link": link,
+                "url": url,
 
-                "source": source_name,
+                "source": original_source,
+
+                "feed_source": source_name,
+
+                "category": category,
 
                 "published": published,
 
                 "timestamp": timestamp,
 
-                "priority": source.get(
-                    "priority",
-                    99
-                ),
+                "priority": priority,
 
-                "category": category,
+            }
 
-            })
+
+            articles.append(
+                article
+            )
 
 
         print(
-            f"🟢 {source_name} → "
-            f"{len(articles)} article(s)"
+            f"✅ {source_name}: "
+            f"{len(articles)} articles"
         )
-
-
-        return articles
 
 
     except Exception as error:
 
         print(
-            f"🔴 Error reading "
-            f"{source_name}: "
+            f"❌ {source_name}: "
             f"{error}"
         )
 
-        return []
+
+    return articles
 
 
 # =========================================================
@@ -684,7 +833,8 @@ def remove_duplicates(
     articles
 ):
 
-    unique_articles = []
+    unique = []
+
 
     seen_urls = set()
 
@@ -693,65 +843,152 @@ def remove_duplicates(
 
     for article in articles:
 
-        title = article.get(
-            "title",
-            ""
-        )
-
-        link = article.get(
-            "link",
-            ""
-        )
-
-
-        # -------------------------------------------------
-        # URL duplicate
-        # -------------------------------------------------
-
-        normalized_link = normalize_url(
-            link
-        )
-
-        if normalized_link:
-
-            url_key = (
-                normalized_link.lower()
+        url = normalize_url(
+            article.get(
+                "url",
+                ""
             )
+        )
 
-            if url_key in seen_urls:
 
-                continue
-
-            seen_urls.add(
-                url_key
+        title = normalize_title(
+            article.get(
+                "title",
+                ""
             )
+        )
 
 
-        # -------------------------------------------------
-        # Title duplicate
-        # -------------------------------------------------
+        if (
+            url
+            and
+            url in seen_urls
+        ):
 
-        normalized_title = normalize_title(
+            continue
+
+
+        if (
             title
-        )
+            and
+            title in seen_titles
+        ):
 
-        if normalized_title:
-
-            if normalized_title in seen_titles:
-
-                continue
-
-            seen_titles.add(
-                normalized_title
-            )
+            continue
 
 
-        unique_articles.append(
+        if url:
+            seen_urls.add(url)
+
+
+        if title:
+            seen_titles.add(title)
+
+
+        unique.append(
             article
         )
 
 
-    return unique_articles
+    return unique
+
+
+# =========================================================
+# REMOVE VERY SIMILAR TITLES
+# =========================================================
+
+def title_words(title):
+
+    title = normalize_title(
+        title
+    )
+
+    return set(
+        title.split()
+    )
+
+
+def is_similar_title(
+    title_a,
+    title_b
+):
+
+    words_a = title_words(
+        title_a
+    )
+
+    words_b = title_words(
+        title_b
+    )
+
+
+    if not words_a or not words_b:
+        return False
+
+
+    intersection = (
+        words_a & words_b
+    )
+
+
+    smaller = min(
+        len(words_a),
+        len(words_b)
+    )
+
+
+    if smaller == 0:
+        return False
+
+
+    similarity = (
+        len(intersection)
+        /
+        smaller
+    )
+
+
+    return similarity >= 0.85
+
+
+def remove_similar_titles(
+    articles
+):
+
+    unique = []
+
+
+    for article in articles:
+
+        duplicate = False
+
+
+        for existing in unique:
+
+            if is_similar_title(
+                article.get(
+                    "title",
+                    ""
+                ),
+                existing.get(
+                    "title",
+                    ""
+                )
+            ):
+
+                duplicate = True
+
+                break
+
+
+        if not duplicate:
+
+            unique.append(
+                article
+            )
+
+
+    return unique
 
 
 # =========================================================
@@ -762,26 +999,22 @@ def sort_news(
     articles
 ):
 
-    # Newest timestamp first.
-    #
-    # If timestamps are identical,
-    # smaller priority number wins.
-    #
-    # priority 1 = higher priority
-    # priority 2 = lower priority
-    #
-
     return sorted(
+
         articles,
+
         key=lambda article: (
+
             -article.get(
                 "timestamp",
                 0
             ),
+
             article.get(
                 "priority",
                 99
             ),
+
         )
     )
 
@@ -805,12 +1038,8 @@ def get_news(
         return []
 
 
-    all_news = []
+    all_articles = []
 
-
-    # -----------------------------------------------------
-    # Read all sources
-    # -----------------------------------------------------
 
     for source in NEWS_SOURCES[
         category
@@ -821,68 +1050,41 @@ def get_news(
             category
         )
 
-        all_news.extend(
+
+        all_articles.extend(
             articles
         )
 
 
-    # -----------------------------------------------------
-    # Remove duplicates
-    # -----------------------------------------------------
-
-    all_news = remove_duplicates(
-        all_news
-    )
-
-
-    # -----------------------------------------------------
-    # Sort newest first
-    # -----------------------------------------------------
-
-    all_news = sort_news(
-        all_news
-    )
-
-
-    # -----------------------------------------------------
-    # Limit
-    # -----------------------------------------------------
-
-    final_news = all_news[
-        :limit
-    ]
-
-
-    # -----------------------------------------------------
-    # Debug
-    # -----------------------------------------------------
-
-    print(
-        f"✅ Selected "
-        f"{len(final_news)} "
-        f"news for "
-        f"{category}"
-    )
-
-
-    for index, news in enumerate(
-        final_news,
-        start=1
-    ):
-
-        print(
-            f"{index}. "
-            f"{news.get('title', '')} "
-            f"| "
-            f"{news.get('source', '')}"
+    # URL/title duplicates
+    all_articles = (
+        remove_duplicates(
+            all_articles
         )
+    )
 
 
-    return final_news
+    # Similar headlines
+    all_articles = (
+        remove_similar_titles(
+            all_articles
+        )
+    )
+
+
+    # Newest first
+    all_articles = (
+        sort_news(
+            all_articles
+        )
+    )
+
+
+    return all_articles[:limit]
 
 
 # =========================================================
-# GET LATEST NEWS
+# GET LATEST
 # =========================================================
 
 def get_latest_news(
@@ -890,74 +1092,111 @@ def get_latest_news(
 ):
 
     categories = [
+
         "football",
+
         "war",
+
         "politics",
+
         "cambodia",
+
     ]
 
 
-    all_news = []
+    all_articles = []
 
-
-    # -----------------------------------------------------
-    # Collect news from all categories
-    # -----------------------------------------------------
 
     for category in categories:
 
-        news_list = get_news(
+        articles = get_news(
             category,
             limit=10
         )
 
 
-        for news in news_list:
-
-            news[
-                "category"
-            ] = category
-
-
-        all_news.extend(
-            news_list
+        all_articles.extend(
+            articles
         )
 
 
-    # -----------------------------------------------------
-    # Remove duplicates
-    # -----------------------------------------------------
-
-    all_news = remove_duplicates(
-        all_news
+    all_articles = (
+        remove_duplicates(
+            all_articles
+        )
     )
 
 
-    # -----------------------------------------------------
-    # Sort
-    # -----------------------------------------------------
-
-    all_news = sort_news(
-        all_news
+    all_articles = (
+        remove_similar_titles(
+            all_articles
+        )
     )
 
 
-    # -----------------------------------------------------
-    # Return latest N
-    # -----------------------------------------------------
-
-    final_news = all_news[
-        :limit
-    ]
-
-
-    print(
-        f"📰 Latest News selected: "
-        f"{len(final_news)}"
+    all_articles = (
+        sort_news(
+            all_articles
+        )
     )
 
 
-    return final_news
+    return all_articles[:limit]
+
+
+# =========================================================
+# BREAKING NEWS
+# =========================================================
+
+def get_breaking_news(
+    category,
+    minutes=15,
+    limit=5
+):
+
+    articles = get_news(
+        category,
+        limit=30
+    )
+
+
+    now = datetime.now(
+        timezone.utc
+    ).timestamp()
+
+
+    cutoff = (
+        now
+        -
+        (
+            minutes * 60
+        )
+    )
+
+
+    breaking = []
+
+
+    for article in articles:
+
+        timestamp = article.get(
+            "timestamp",
+            0
+        )
+
+
+        if timestamp <= 0:
+            continue
+
+
+        if timestamp >= cutoff:
+
+            breaking.append(
+                article
+            )
+
+
+    return breaking[:limit]
 
 
 # =========================================================
@@ -966,120 +1205,145 @@ def get_latest_news(
 
 def check_sources():
 
-    print("")
+    print()
 
     print(
-        "===================================="
+        "=" * 70
     )
 
     print(
-        "🔎 SOURCE HEALTH CHECK"
+        "🔍 KHMER NEWS 24 "
+        "SOURCE HEALTH CHECK"
     )
 
     print(
-        "===================================="
+        "=" * 70
     )
 
 
-    total_ok = 0
+    total_sources = 0
 
-    total_empty = 0
+    working_sources = 0
 
-    total_error = 0
+    empty_sources = 0
+
+    failed_sources = 0
 
 
     for category, sources in (
         NEWS_SOURCES.items()
     ):
 
+        print()
+
         print(
-            f"\n📂 {category.upper()}"
+            f"📂 {category.upper()}"
+        )
+
+        print(
+            "-" * 50
         )
 
 
         for source in sources:
 
-            source_name = source.get(
-                "name",
-                "Unknown"
-            )
-
-            source_url = source.get(
-                "url",
-                ""
-            )
+            total_sources += 1
 
 
             try:
 
                 feed = feedparser.parse(
-                    source_url
+                    source["url"]
                 )
 
 
-                entries = getattr(
-                    feed,
-                    "entries",
-                    []
+                count = len(
+                    feed.entries
                 )
 
 
-                if entries:
+                if count > 0:
 
-                    total_ok += 1
+                    working_sources += 1
+
 
                     print(
-                        f"🟢 "
-                        f"{source_name}"
-                        f" → OK "
-                        f"({len(entries)} items)"
+                        f"✅ "
+                        f"{source['name']}: "
+                        f"{count}"
                     )
 
 
                 else:
 
-                    total_empty += 1
+                    empty_sources += 1
+
 
                     print(
-                        f"🟡 "
-                        f"{source_name}"
-                        f" → EMPTY"
+                        f"⚠️ "
+                        f"{source['name']}: "
+                        f"EMPTY"
                     )
 
 
             except Exception as error:
 
-                total_error += 1
+                failed_sources += 1
+
 
                 print(
-                    f"🔴 "
-                    f"{source_name}"
-                    f" → ERROR: "
+                    f"❌ "
+                    f"{source['name']}: "
                     f"{error}"
                 )
 
 
-    print("")
+    print()
 
     print(
-        "===================================="
+        "=" * 70
     )
 
     print(
-        f"🟢 OK: {total_ok}"
+        "📊 SOURCE SUMMARY"
     )
 
     print(
-        f"🟡 EMPTY: {total_empty}"
+        "=" * 70
     )
 
-    print(
-        f"🔴 ERROR: {total_error}"
-    )
 
     print(
-        "===================================="
+        f"Total sources: "
+        f"{total_sources}"
     )
+
+
+    print(
+        f"Working: "
+        f"{working_sources}"
+    )
+
+
+    print(
+        f"Empty: "
+        f"{empty_sources}"
+    )
+
+
+    print(
+        f"Failed: "
+        f"{failed_sources}"
+    )
+
+
+    print()
+
+    print(
+        "✅ SOURCE CHECK FINISHED"
+    )
+
+    print()
 
 
 # =========================================================
@@ -1091,70 +1355,135 @@ def test_category(
     limit=5
 ):
 
-    print("")
+    print()
 
     print(
-        "===================================="
+        "=" * 70
     )
 
     print(
-        f"🧪 TEST CATEGORY: {category}"
+        f"🧪 TEST: "
+        f"{category.upper()}"
     )
 
     print(
-        "===================================="
+        "=" * 70
     )
 
 
-    news_list = get_news(
+    articles = get_news(
         category,
-        limit=limit
+        limit
     )
 
 
-    if not news_list:
+    if not articles:
 
         print(
-            "❌ No news found."
+            "⚠️ No articles found."
         )
 
         return
 
 
-    for index, news in enumerate(
-        news_list,
-        start=1
+    for index, article in enumerate(
+        articles,
+        1
     ):
 
-        print("")
+        print()
 
         print(
             f"#{index}"
         )
 
-        print(
-            f"Title: "
-            f"{news.get('title', '')}"
-        )
 
         print(
-            f"Source: "
-            f"{news.get('source', '')}"
-        )
-
-        print(
-            f"Published: "
-            f"{news.get('published', '')}"
-        )
-
-        print(
-            f"Link: "
-            f"{news.get('link', '')}"
+            "📰 "
+            +
+            article.get(
+                "title",
+                ""
+            )
         )
 
 
-    print("")
+        print(
+            "📌 Source: "
+            +
+            article.get(
+                "source",
+                ""
+            )
+        )
+
+
+        print(
+            "📡 Feed: "
+            +
+            article.get(
+                "feed_source",
+                ""
+            )
+        )
+
+
+        print(
+            "🕐 Published: "
+            +
+            article.get(
+                "published",
+                ""
+            )
+        )
+
+
+        print(
+            "🔗 "
+            +
+            article.get(
+                "url",
+                ""
+            )
+        )
+
+
+    print()
 
     print(
-        "===================================="
+        f"✅ Found "
+        f"{len(articles)} articles"
+    )
+
+
+# =========================================================
+# LOCAL TEST
+# =========================================================
+
+if __name__ == "__main__":
+
+    print()
+
+    print(
+        "📰 KHMER NEWS 24"
+    )
+
+    print(
+        "NEWS SYSTEM TEST"
+    )
+
+    print()
+
+
+    check_sources()
+
+
+    print(
+        "🧪 TESTING CAMBODIA"
+    )
+
+
+    test_category(
+        "cambodia",
+        10
     )

@@ -3588,30 +3588,20 @@ async def post_init(
     init_database()
 
 
-    # Start automatic Breaking News
+    # Start automatic news tasks directly on the running event loop.
+    # This avoids the PTBUserWarning caused by calling
+    # Application.create_task() from post_init().
 
-    application.create_task(
-
-        auto_breaking_news(
-
-            application
-
-        )
-
+    asyncio.create_task(
+        auto_breaking_news(application)
     )
 
-
-    # Start automatic Cambodia News
-
-    application.create_task(
-
-        auto_cambodia_news(
-
-            application
-
-        )
-
+    asyncio.create_task(
+        auto_cambodia_news(application)
     )
+
+    print("🔥 Auto Breaking News task scheduled")
+    print("🇰🇭 Auto Cambodia News task scheduled")
 
 
     print()

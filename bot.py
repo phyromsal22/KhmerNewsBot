@@ -3,6 +3,8 @@ import html
 import asyncio
 import json
 import urllib.request
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -3682,10 +3684,63 @@ async def error_handler(
 
 
 # ============================================================
+# RENDER HEALTH SERVER
+# ============================================================
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+
+        self.send_response(200)
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+
+        self.end_headers()
+
+        self.wfile.write(
+            b"Khmer News 24 is running"
+        )
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+
+    port = int(
+        os.getenv(
+            "PORT",
+            "10000"
+        )
+    )
+
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    thread = threading.Thread(
+        target=server.serve_forever,
+        daemon=True
+    )
+
+    thread.start()
+
+    print(
+        f"🌐 Render Health Server running on 0.0.0.0:{port}"
+    )
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main():
+
+    start_health_server()
 
     application = (
 

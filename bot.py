@@ -15,6 +15,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    BotCommand,
 )
 
 from telegram.constants import ParseMode
@@ -3579,6 +3580,28 @@ async def auto_cambodia_news(
 # POST INIT
 # ============================================================
 
+async def setup_bot_menu(application):
+    """Set the Telegram Menu / command list shown in the bot chat."""
+    commands = [
+        BotCommand("start", "🏠 ចាប់ផ្តើម"),
+        BotCommand("latest", "📰 ព័ត៌មានថ្មីៗ"),
+        BotCommand("cambodia", "🇰🇭 ព័ត៌មានកម្ពុជា"),
+        BotCommand("football", "⚽ ព័ត៌មានបាល់ទាត់"),
+        BotCommand("world", "🌍 ព័ត៌មានពិភពលោក"),
+        BotCommand("politics", "🏛️ នយោបាយ"),
+        BotCommand("breaking", "🔥 Breaking News"),
+        BotCommand("today", "📅 ប្រកួតថ្ងៃនេះ"),
+        BotCommand("tomorrow", "📆 ប្រកួតថ្ងៃស្អែក"),
+        BotCommand("help", "ℹ️ ជំនួយ"),
+    ]
+
+    try:
+        await application.bot.set_my_commands(commands)
+        print("📋 Telegram Menu commands configured")
+    except Exception as error:
+        print(f"⚠️ Telegram Menu setup error: {error}")
+
+
 async def post_init(
     application
 ):
@@ -3586,6 +3609,9 @@ async def post_init(
     # Initialize SQLite database
 
     init_database()
+
+    # Configure Telegram Menu commands.
+    await setup_bot_menu(application)
 
 
     # Start automatic news tasks directly on the running event loop.

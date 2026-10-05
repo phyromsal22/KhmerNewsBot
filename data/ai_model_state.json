@@ -1,0 +1,7 @@
+{
+    "primary_model": "gemini-3.8-flash",
+    "fallback_model": "gemini-3.5-flash-lite",
+    "primary_quota_locked": true,
+    "primary_quota_reset_time": "2026-10-05T23:59:56.792757+00:00",
+    "updated_at": "2026-10-05T00:38:29.793551+00:00"
+}

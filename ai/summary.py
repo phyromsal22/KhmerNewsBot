@@ -2,19 +2,22 @@
 Khmer News 24 - V2
 AI Khmer News Summary
 
-Primary:
-    gemini-3.8-flash
-
-Fallback:
-    gemini-3.5-flash-lite
+Gemini Model Priority:
+    1. gemini-3.8-flash
+    2. gemini-3.5-flash-lite
+    3. gemini-3.1-flash-lite
 
 Features:
-- Global Gemini quota lock
-- Automatic fallback
+- Automatic 3-level Gemini fallback
+- Daily quota detection
+- RPM/rate-limit detection
+- Temporary server error detection
+- Persistent model lock state
 - Khmer language validation
-- Retry invalid Khmer output
 - No Thai / Lao / Burmese
 - Khmer title extraction
+- Retry invalid Khmer output
+- Compatible with ai.processor.py
 """
 
 import os
@@ -29,9 +32,13 @@ from ai.prompts import get_summary_prompt
 from ai.model_state import (
     PRIMARY_MODEL,
     FALLBACK_MODEL,
+    SECOND_FALLBACK_MODEL,
+    MODEL_CHAIN,
     get_active_model,
-    is_primary_locked,
+    get_available_fallback,
+    is_model_locked,
     handle_model_error,
+    all_models_locked,
 )
 
 
@@ -41,7 +48,9 @@ from ai.model_state import (
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv(
+    "GEMINI_API_KEY"
+)
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
@@ -59,19 +68,18 @@ client = genai.Client(
 
 
 # ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 
-# One retry is enough for invalid/empty output.
-# 429/quota and 503 errors switch away from the primary immediately.
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 RETRY_DELAY = 3
-# 503 means the model is temporarily unavailable; switch to fallback immediately.
-FALLBACK_ON_503 = True
+
+MIN_KHMER_CHARACTERS = 20
+MIN_KHMER_RATIO = 0.55
 
 
 # ============================================================
-# LANGUAGE CHECK
+# LANGUAGE PATTERNS
 # ============================================================
 
 THAI_PATTERN = re.compile(
@@ -90,10 +98,30 @@ KHMER_PATTERN = re.compile(
     r"[\u1780-\u17FF]"
 )
 
+# Cyrillic
+CYRILLIC_PATTERN = re.compile(
+    r"[\u0400-\u04FF]"
+)
+
+# Greek
+GREEK_PATTERN = re.compile(
+    r"[\u0370-\u03FF]"
+)
+
+# Arabic
+ARABIC_PATTERN = re.compile(
+    r"[\u0600-\u06FF]"
+)
+
+
+# ============================================================
+# LANGUAGE CHECK
+# ============================================================
 
 def contains_unwanted_scripts(text):
     """
-    Check for Thai, Lao or Burmese characters.
+    Check for Thai, Lao, Burmese, Cyrillic,
+    Greek or Arabic characters.
     """
 
     if not text:
@@ -108,92 +136,130 @@ def contains_unwanted_scripts(text):
     if BURMESE_PATTERN.search(text):
         return True
 
+    if CYRILLIC_PATTERN.search(text):
+        return True
+
+    if GREEK_PATTERN.search(text):
+        return True
+
+    if ARABIC_PATTERN.search(text):
+        return True
+
     return False
+
+
+def count_khmer_characters(text):
+    """
+    Count Khmer Unicode characters.
+    """
+
+    if not text:
+        return 0
+
+    return len(
+        KHMER_PATTERN.findall(text)
+    )
 
 
 def has_khmer(text):
     """
-    Check whether text contains Khmer characters.
+    Check whether text contains Khmer.
+    """
+
+    return (
+        count_khmer_characters(text) > 0
+    )
+
+
+def calculate_khmer_ratio(text):
+    """
+    Calculate approximate Khmer character ratio.
+
+    Spaces, punctuation and numbers are ignored.
     """
 
     if not text:
-        return False
+        return 0.0
 
-    return bool(
-        KHMER_PATTERN.search(text)
+    khmer_count = count_khmer_characters(
+        text
+    )
+
+    meaningful_chars = []
+
+    for char in text:
+
+        if char.isspace():
+            continue
+
+        if char.isdigit():
+            continue
+
+        if char.isascii() and not char.isalpha():
+            continue
+
+        meaningful_chars.append(char)
+
+    if not meaningful_chars:
+        return 0.0
+
+    return (
+        khmer_count
+        / len(meaningful_chars)
     )
 
 
 def validate_khmer_summary(text):
     """
-    Validate generated Khmer summary.
+    Strong validation for Khmer summary.
+
+    Requirements:
+    - Not empty
+    - At least 20 Khmer characters
+    - Khmer ratio >= 55%
+    - No Thai
+    - No Lao
+    - No Burmese
+    - No Cyrillic
+    - No Greek
+    - No Arabic
     """
 
     if not text:
+        print(
+            "⚠️ Summary is empty"
+        )
         return False
 
     text = text.strip()
 
-    # Too short
-    if len(text) < 50:
+    khmer_count = (
+        count_khmer_characters(text)
+    )
 
+    if khmer_count < MIN_KHMER_CHARACTERS:
         print(
-            "⚠️ Summary too short"
+            "⚠️ Not enough Khmer characters: "
+            f"{khmer_count}"
         )
-
         return False
 
-    # Must contain Khmer
-    if not has_khmer(text):
-
-        print(
-            "⚠️ No Khmer characters detected"
-        )
-
-        return False
-
-    # No Thai/Lao/Burmese
     if contains_unwanted_scripts(text):
-
         print(
-            "⚠️ Thai/Lao/Burmese characters detected"
+            "⚠️ Unwanted language/script detected"
         )
-
         return False
 
-    # Reject other unexpected writing systems that can appear in
-    # malformed model output. English names/technical terms remain allowed.
-    unexpected_patterns = {
-        "Georgian": r"[\u10A0-\u10FF]",
-        "Greek": r"[\u0370-\u03FF]",
-        "Cyrillic": r"[\u0400-\u04FF]",
-        "Arabic": r"[\u0600-\u06FF]",
-    }
+    ratio = calculate_khmer_ratio(
+        text
+    )
 
-    for script_name, pattern in unexpected_patterns.items():
-        if re.search(pattern, text):
-            print(
-                f"⚠️ {script_name} characters detected"
-            )
-            return False
-
-    # Require a strong Khmer presence so a mostly-English response
-    # cannot pass merely because it contains one Khmer character.
-    khmer_chars = len(re.findall(r"[\u1780-\u17FF]", text))
-    latin_chars = len(re.findall(r"[A-Za-z]", text))
-    comparable = khmer_chars + latin_chars
-
-    if khmer_chars < 20:
-        print("⚠️ Not enough Khmer characters")
+    if ratio < MIN_KHMER_RATIO:
+        print(
+            "⚠️ Khmer ratio too low: "
+            f"{ratio:.1%}"
+        )
         return False
-
-    if comparable > 0:
-        ratio = (khmer_chars / comparable) * 100
-        if ratio < 55:
-            print(
-                f"⚠️ Khmer ratio too low: {ratio:.1f}%"
-            )
-            return False
 
     return True
 
@@ -204,83 +270,203 @@ def validate_khmer_summary(text):
 
 def extract_khmer_title(text):
     """
-    Extract Khmer title from generated summary.
+    Extract a Khmer title from the generated output.
 
-    Expected format:
+    Supports common formats:
 
-    ចំណងជើង៖
-    [Khmer title]
+        ចំណងជើង:
+        <title>
 
-    Returns:
-        Khmer title string
+        ចំណងជើង
+        <title>
+
+        Title:
+        <title>
+
+    If no explicit title is found, the function
+    searches for the first suitable Khmer line.
     """
 
     if not text:
         return ""
 
-    # Normalize line endings
-    text = text.replace(
-        "\r\n",
-        "\n"
-    ).replace(
-        "\r",
-        "\n"
+    text = (
+        text
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .strip()
     )
 
-    # Find title section
-    patterns = [
-        r"ចំណងជើង\s*៖\s*\n?\s*(.+)",
-        r"ចំណងជើង\s*:\s*\n?\s*(.+)",
-        r"Title\s*:\s*\n?\s*(.+)",
+    lines = [
+        line.strip()
+        for line in text.split("\n")
+        if line.strip()
     ]
 
-    for pattern in patterns:
+    # --------------------------------------------------------
+    # Explicit title markers
+    # --------------------------------------------------------
 
-        match = re.search(
-            pattern,
-            text,
-            flags=re.IGNORECASE
-        )
+    title_markers = [
+        "ចំណងជើង:",
+        "ចំណងជើង៖",
+        "ចំណងជើង",
+        "ប្រធានបទ:",
+        "ប្រធានបទ៖",
+        "Title:",
+        "TITLE:",
+        "title:",
+        "Headline:",
+        "ចំណងជើងព័ត៌មាន:",
+        "ចំណងជើងព័ត៌មាន៖",
+    ]
 
-        if match:
+    for index, line in enumerate(lines):
 
-            title = match.group(
-                1
-            ).strip()
+        clean_line = line.strip()
 
-            # Stop if another section accidentally
-            # appears on the same line
-            stop_words = [
-                "សេចក្តីសង្ខេប",
-                "សេចក្តីសង្ខេប:",
-                "ព័ត៌មានសំខាន់",
-                "ព័ត៌មានសំខាន់:",
-                "ប្រភព",
-                "ប្រភព:",
-            ]
+        # Remove markdown formatting
+        clean_line = re.sub(
+            r"^[#*\-•\s]+",
+            "",
+            clean_line,
+        ).strip()
 
-            for stop_word in stop_words:
+        for marker in title_markers:
 
-                if stop_word in title:
+            if clean_line.startswith(marker):
 
-                    title = title.split(
-                        stop_word
-                    )[0].strip()
+                title = clean_line[
+                    len(marker):
+                ].strip()
 
-            # Remove markdown formatting
-            title = re.sub(
-                r"^[#*\-\s]+",
-                "",
-                title
-            ).strip()
+                title = re.sub(
+                    r"^[#*\-•\s]+",
+                    "",
+                    title,
+                ).strip()
 
-            if title and has_khmer(title):
+                # If marker has no title on same line,
+                # use next line.
+                if not title:
 
-                if not contains_unwanted_scripts(title):
+                    if index + 1 < len(lines):
 
+                        title = lines[
+                            index + 1
+                        ].strip()
+
+                        title = re.sub(
+                            r"^[#*\-•\s]+",
+                            "",
+                            title,
+                        ).strip()
+
+                if (
+                    title
+                    and has_khmer(title)
+                    and not contains_unwanted_scripts(
+                        title
+                    )
+                ):
                     return title
 
+    # --------------------------------------------------------
+    # Look for first Khmer line
+    # --------------------------------------------------------
+
+    for line in lines:
+
+        line = re.sub(
+            r"^[#*\-•\s]+",
+            "",
+            line,
+        ).strip()
+
+        if not line:
+            continue
+
+        # Skip obvious section labels
+        lower_line = line.lower()
+
+        if lower_line in (
+            "summary",
+            "title",
+            "headline",
+        ):
+            continue
+
+        if (
+            has_khmer(line)
+            and not contains_unwanted_scripts(
+                line
+            )
+        ):
+
+            # Keep title reasonably short.
+            if len(line) <= 180:
+                return line
+
     return ""
+
+
+# ============================================================
+# ERROR CHECKING
+# ============================================================
+
+def is_quota_error(error):
+    """
+    Backward-compatible quota check.
+    """
+
+    message = str(error).lower()
+
+    keywords = [
+        "429",
+        "resource_exhausted",
+        "quota",
+        "quota exceeded",
+        "daily quota",
+        "daily limit",
+        "generate_content_free_tier_requests",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "requests per minute",
+    ]
+
+    return any(
+        keyword in message
+        for keyword in keywords
+    )
+
+
+def is_temporary_model_error(error):
+    """
+    Detect temporary Gemini errors that should
+    trigger model fallback.
+    """
+
+    message = str(error).lower()
+
+    keywords = [
+        "429",
+        "resource_exhausted",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "503",
+        "service unavailable",
+        "unavailable",
+        "overloaded",
+        "temporarily unavailable",
+    ]
+
+    return any(
+        keyword in message
+        for keyword in keywords
+    )
 
 
 # ============================================================
@@ -289,29 +475,68 @@ def extract_khmer_title(text):
 
 def clean_summary(text):
     """
-    Basic cleanup without changing the meaning.
+    Basic cleanup without changing meaning.
     """
 
     if not text:
         return ""
 
-    text = text.strip()
+    text = str(text).strip()
 
-    # Remove markdown code fences
+    # Remove code fences
     text = re.sub(
-        r"^```(?:text|markdown)?",
+        r"^```(?:text|markdown)?\s*",
         "",
         text,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     )
 
     text = re.sub(
-        r"```$",
+        r"\s*```$",
         "",
-        text
+        text,
+        flags=re.IGNORECASE,
     )
 
     return text.strip()
+
+
+# ============================================================
+# BUILD PROMPT
+# ============================================================
+
+def build_summary_prompt(article):
+    """
+    Build the summary prompt using the existing
+    prompt system.
+    """
+
+    title = article.get(
+        "title",
+        "",
+    )
+
+    summary = article.get(
+        "summary",
+        "",
+    )
+
+    category = article.get(
+        "category",
+        "",
+    )
+
+    source = article.get(
+        "source",
+        "",
+    )
+
+    return get_summary_prompt(
+        title=title,
+        summary=summary,
+        category=category,
+        source=source,
+    )
 
 
 # ============================================================
@@ -320,22 +545,24 @@ def clean_summary(text):
 
 def call_gemini(
     model,
-    prompt
+    prompt,
 ):
+    """
+    Send request to Gemini.
+    """
 
     response = client.models.generate_content(
         model=model,
-        contents=prompt
+        contents=prompt,
     )
 
     text = getattr(
         response,
         "text",
-        ""
+        "",
     )
 
     if not text:
-
         raise ValueError(
             "Gemini returned an empty response"
         )
@@ -344,61 +571,46 @@ def call_gemini(
 
 
 # ============================================================
-# GENERATE SUMMARY WITH ONE MODEL
+# GENERATE WITH ONE MODEL
 # ============================================================
 
-def generate_summary_with_model(
+def generate_with_model(
     article,
-    model
+    model,
 ):
+    """
+    Generate Khmer summary using one model.
 
-    title = article.get(
-        "title",
-        ""
-    )
+    Returns:
+        Valid Khmer summary string
+        or empty string
+    """
 
-    summary = article.get(
-        "summary",
-        ""
-    )
-
-    category = article.get(
-        "category",
-        ""
-    )
-
-    source = article.get(
-        "source",
-        ""
-    )
-
-    prompt = get_summary_prompt(
-        title=title,
-        summary=summary,
-        category=category,
-        source=source
+    prompt = build_summary_prompt(
+        article
     )
 
     for attempt in range(
         1,
-        MAX_RETRIES + 1
+        MAX_RETRIES + 1,
     ):
 
         print(
-            f"📝 Khmer Summary | "
+            f"🤖 Khmer Summary | "
             f"{model} | "
-            f"Attempt {attempt}/{MAX_RETRIES}"
+            f"Attempt "
+            f"{attempt}/{MAX_RETRIES}"
         )
 
         try:
 
-            text = call_gemini(
+            response_text = call_gemini(
                 model,
-                prompt
+                prompt,
             )
 
             text = clean_summary(
-                text
+                response_text
             )
 
             if not text:
@@ -407,121 +619,85 @@ def generate_summary_with_model(
                     "⚠️ Empty summary response"
                 )
 
-                if attempt < MAX_RETRIES:
-                    time.sleep(
-                        RETRY_DELAY
-                    )
-
-                continue
-
-            if validate_khmer_summary(
+            elif validate_khmer_summary(
                 text
             ):
 
                 print(
-                    "✅ Khmer summary generated"
+                    f"✅ Khmer summary generated "
+                    f"with {model}"
                 )
 
                 return text
 
-            print(
-                "⚠️ Invalid Khmer summary"
-            )
+            else:
 
-            if attempt < MAX_RETRIES:
-
-                time.sleep(
-                    RETRY_DELAY
+                print(
+                    f"⚠️ Invalid Khmer output "
+                    f"from {model}"
                 )
+
+                # Invalid language output is not
+                # necessarily a model quota error.
+                # Give the same model another chance.
+                if attempt < MAX_RETRIES:
+
+                    time.sleep(
+                        RETRY_DELAY
+                    )
+
+                    continue
+
+                return ""
 
         except Exception as error:
 
             print(
-                f"⚠️ Summary AI error: {error}"
+                f"⚠️ {model} error: "
+                f"{error}"
             )
 
-            error_text = str(error).upper()
-            is_503 = (
-                "503" in error_text
-                or "UNAVAILABLE" in error_text
-                or "SERVICE UNAVAILABLE" in error_text
+            # Tell global model state about
+            # quota/rate/server errors.
+            state_result = handle_model_error(
+                model,
+                error,
             )
 
-            # ------------------------------------------
-            # Primary model: 429 quota OR 503 unavailable
-            # ------------------------------------------
-
-            if model == PRIMARY_MODEL:
-
-                quota_error = handle_model_error(
-                    PRIMARY_MODEL,
-                    error
-                )
-
-                if quota_error:
-
-                    print(
-                        "🚨 Gemini primary quota/rate limit detected."
-                    )
-
-                    print(
-                        f"🔒 {PRIMARY_MODEL} locked."
-                    )
-
-                    print(
-                        f"🛟 Switching immediately to "
-                        f"{FALLBACK_MODEL}"
-                    )
-
-                    return ""
-
-                # 503 is not necessarily a quota error, but the
-                # primary model is temporarily unavailable. Do not
-                # waste more primary requests; let summarize_article()
-                # switch to the fallback model.
-                if is_503 and FALLBACK_ON_503:
-
-                    print(
-                        f"⚠️ {PRIMARY_MODEL} returned 503 UNAVAILABLE."
-                    )
-
-                    print(
-                        f"🛟 Switching immediately to {FALLBACK_MODEL}"
-                    )
-
-                    return ""
-
-            # ------------------------------------------
-            # Fallback model: do not hammer 3.5 on 429/503
-            # ------------------------------------------
-
-            if model == FALLBACK_MODEL and (
-                "429" in error_text
-                or "RESOURCE_EXHAUSTED" in error_text
-                or "QUOTA" in error_text
-                or "RATE LIMIT" in error_text
-                or "503" in error_text
-                or "UNAVAILABLE" in error_text
+            # Temporary model error:
+            # immediately leave this model.
+            if is_temporary_model_error(
+                error
             ):
+
                 print(
-                    f"🛑 {FALLBACK_MODEL} is temporarily "
-                    "rate-limited/unavailable."
+                    f"🔒 {model} temporarily "
+                    f"unavailable."
                 )
+
                 print(
-                    "⏭️ Skipping this article instead of "
-                    "retrying immediately."
+                    "🛟 Moving to next model."
                 )
+
                 return ""
 
-            # ------------------------------------------
-            # Normal error
-            # ------------------------------------------
-
+            # Other normal error:
+            # retry this model.
             if attempt < MAX_RETRIES:
+
+                print(
+                    f"⏳ Waiting "
+                    f"{RETRY_DELAY}s "
+                    f"before retry..."
+                )
 
                 time.sleep(
                     RETRY_DELAY
                 )
+
+            else:
+
+                return ""
 
     return ""
 
@@ -532,58 +708,91 @@ def generate_summary_with_model(
 
 def generate_summary(
     article,
-    model=None
+    model=None,
 ):
+    """
+    Generate Khmer summary using STRICT sequential model fallback.
 
-    # ========================================================
-    # GLOBAL MODEL STATE
-    # ========================================================
+    Priority is always: 3.8 -> 3.5 -> 3.1.
 
-    active_model = get_active_model()
+    Once a model has failed, this function never goes backward
+    to an earlier model during the same request.
+    """
+
+    if not article:
+        return ""
+
+    # --------------------------------------------------------
+    # Build a strict forward-only model sequence.
+    # --------------------------------------------------------
+    if model:
+        requested_model = str(model).strip()
+
+        if requested_model in MODEL_CHAIN:
+            start_index = MODEL_CHAIN.index(requested_model)
+        else:
+            print(
+                f"⚠️ Unknown requested model: {requested_model}"
+            )
+            start_index = 0
+    else:
+        # Start with the highest-priority currently available model.
+        start_index = None
+
+        for index, candidate in enumerate(MODEL_CHAIN):
+            if not is_model_locked(candidate):
+                start_index = index
+                break
+
+        if start_index is None:
+            print(
+                "⏳ All Gemini models are temporarily unavailable."
+            )
+            return ""
+
+    # --------------------------------------------------------
+    # STRICT FALLBACK: only move forward in MODEL_CHAIN.
+    # Never restart from 3.8 after moving to 3.5 or 3.1.
+    # --------------------------------------------------------
+    for index in range(start_index, len(MODEL_CHAIN)):
+        active_model = MODEL_CHAIN[index]
+
+        if is_model_locked(active_model):
+            print(
+                f"🔒 {active_model} is locked. Skipping to next model."
+            )
+            continue
+
+        print(
+            f"🧠 Summary Active Model: {active_model}"
+        )
+
+        result = generate_with_model(
+            article,
+            active_model,
+        )
+
+        if result:
+            return result
+
+        # Move ONLY to the next model in MODEL_CHAIN.
+        if index + 1 < len(MODEL_CHAIN):
+            next_model = MODEL_CHAIN[index + 1]
+
+            print(
+                f"🛟 Summary fallback: "
+                f"{active_model} → {next_model}"
+            )
+        else:
+            print(
+                f"🛑 {active_model} failed. "
+                "No more fallback models available."
+            )
 
     print(
-        f"🧠 Summary Active Model: "
-        f"{active_model}"
+        "❌ All models in the allowed fallback chain failed."
     )
-
-    # ========================================================
-    # PRIMARY LOCKED
-    # ========================================================
-
-    if is_primary_locked():
-
-        print(
-            f"🔒 {PRIMARY_MODEL} quota locked."
-        )
-
-        print(
-            f"🛟 Using {FALLBACK_MODEL} directly."
-        )
-
-        return generate_summary_with_model(
-            article,
-            FALLBACK_MODEL
-        )
-
-    # ========================================================
-    # EXPLICIT FALLBACK REQUEST
-    # ========================================================
-
-    if model == FALLBACK_MODEL:
-
-        return generate_summary_with_model(
-            article,
-            FALLBACK_MODEL
-        )
-
-    # ========================================================
-    # PRIMARY
-    # ========================================================
-
-    return generate_summary_with_model(
-        article,
-        PRIMARY_MODEL
-    )
+    return ""
 
 
 # ============================================================
@@ -591,37 +800,50 @@ def generate_summary(
 # ============================================================
 
 def generate_fallback_summary(
-    article
+    article,
 ):
+    """
+    Backward-compatible function.
+
+    Uses the next available model instead of
+    hard-coding only Gemini 3.5.
+    """
+
+    fallback_model = get_available_fallback()
+
+    if not fallback_model:
+
+        print(
+            "⏳ No fallback Gemini model available."
+        )
+
+        return ""
 
     print(
         f"🛟 Fallback Summary | "
-        f"{FALLBACK_MODEL}"
+        f"{fallback_model}"
     )
 
-    # One call chain is enough because
-    # generate_summary() already handles
-    # fallback model execution.
-
-    result = generate_summary(
+    result = generate_with_model(
         article,
-        model=FALLBACK_MODEL
+        fallback_model,
     )
 
     if result:
 
         print(
-            "✅ Fallback Khmer summary generated"
+            f"✅ Fallback summary generated "
+            f"with {fallback_model}"
         )
 
-        return result
+    else:
 
-    print(
-        "❌ Fallback could not generate "
-        "valid Khmer summary"
-    )
+        print(
+            "❌ Fallback could not generate "
+            "valid Khmer summary."
+        )
 
-    return ""
+    return result
 
 
 # ============================================================
@@ -629,71 +851,72 @@ def generate_fallback_summary(
 # ============================================================
 
 def summarize_article(
-    article
+    article,
 ):
+    """
+    Process one article.
+
+    Adds:
+        khmer_summary
+        khmer_title
+    """
 
     if not article:
         return None
-
-    # ========================================================
-    # GENERATE SUMMARY
-    # ========================================================
 
     result = generate_summary(
         article
     )
 
-    # ========================================================
-    # IF PRIMARY FAILED
-    # TRY FALLBACK
-    # ========================================================
-
     if not result:
-        # generate_summary() already uses 3.5 directly when 3.8
-        # is globally locked. Only one fallback attempt is needed.
-        result = generate_fallback_summary(
-            article
+
+        print(
+            "❌ Could not generate Khmer summary."
         )
 
-    # ========================================================
-    # SAVE RESULT
-    # ========================================================
+        return None
 
-    if result:
+    processed_article = article.copy()
 
-        article = article.copy()
+    # --------------------------------------------------------
+    # Khmer summary
+    # --------------------------------------------------------
 
-        # Full Khmer summary
-        article["khmer_summary"] = result
+    processed_article[
+        "khmer_summary"
+    ] = result
 
-        # Extract Khmer title
-        khmer_title = extract_khmer_title(
-            result
+    # --------------------------------------------------------
+    # Khmer title
+    # --------------------------------------------------------
+
+    khmer_title = extract_khmer_title(
+        result
+    )
+
+    if khmer_title:
+
+        processed_article[
+            "khmer_title"
+        ] = khmer_title
+
+        print(
+            f"📰 Khmer Title: "
+            f"{khmer_title}"
         )
 
-        if khmer_title:
+    else:
 
-            article["khmer_title"] = (
-                khmer_title
-            )
+        processed_article[
+            "khmer_title"
+        ] = ""
 
-            print(
-                f"📰 Khmer Title: "
-                f"{khmer_title}"
-            )
+        print(
+            "⚠️ Khmer title could not "
+            "be extracted."
+        )
 
-        else:
-
-            # Keep empty rather than invent title
-            article["khmer_title"] = ""
-
-            print(
-                "⚠️ Khmer title could not be extracted"
-            )
-
-        return article
-
-    return None
+    return processed_article
 
 
 # ============================================================
@@ -701,8 +924,11 @@ def summarize_article(
 # ============================================================
 
 def summarize_articles(
-    articles
+    articles,
 ):
+    """
+    Process multiple articles.
+    """
 
     if not articles:
         return []
@@ -726,10 +952,40 @@ def summarize_articles(
         except Exception as error:
 
             print(
-                f"❌ Summary processing error: {error}"
+                f"❌ Summary processing error: "
+                f"{error}"
             )
 
     return results
+
+
+# ============================================================
+# MODEL STATUS
+# ============================================================
+
+def get_summary_model_status():
+    """
+    Return current model information.
+
+    Useful for admin/debugging.
+    """
+
+    return {
+        "primary": PRIMARY_MODEL,
+        "fallback": FALLBACK_MODEL,
+        "second_fallback": (
+            SECOND_FALLBACK_MODEL
+        ),
+        "model_chain": list(
+            MODEL_CHAIN
+        ),
+        "active_model": (
+            get_active_model()
+        ),
+        "all_locked": (
+            all_models_locked()
+        ),
+    }
 
 
 # ============================================================
@@ -737,6 +993,39 @@ def summarize_articles(
 # ============================================================
 
 if __name__ == "__main__":
+
+    print()
+    print("=" * 60)
+    print("KHMER NEWS 24")
+    print("AI SUMMARY TEST")
+    print("=" * 60)
+
+    print()
+    print("Gemini Model Chain:")
+
+    for index, model_name in enumerate(
+        MODEL_CHAIN,
+        start=1,
+    ):
+
+        print(
+            f"{index}. {model_name}"
+        )
+
+    print()
+
+    print(
+        f"Active Model: "
+        f"{get_active_model()}"
+    )
+
+    print(
+        f"All Models Locked: "
+        f"{all_models_locked()}"
+    )
+
+    print()
+    print("=" * 60)
 
     test_article = {
 
@@ -760,36 +1049,43 @@ if __name__ == "__main__":
         test_article
     )
 
-    print(
-        "\n" + "=" * 60
-    )
+    print()
 
     if result:
 
         print(
-            "🇰🇭 Khmer Title:"
+            "✅ SUMMARY TEST PASSED"
+        )
+
+        print()
+        print(
+            "Khmer Title:"
         )
 
         print(
             result.get(
                 "khmer_title",
-                ""
+                "",
             )
         )
 
+        print()
         print(
-            "\n📝 Khmer Summary:"
+            "Khmer Summary:"
         )
 
         print(
             result.get(
                 "khmer_summary",
-                ""
+                "",
             )
         )
 
     else:
 
         print(
-            "❌ Summary test failed"
+            "❌ SUMMARY TEST FAILED"
         )
+
+    print()
+    print("=" * 60)

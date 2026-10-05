@@ -1,690 +1,1275 @@
 """
-============================================================
-KHMER NEWS 24
-AI MODEL STATE / GLOBAL QUOTA FALLBACK
-============================================================
+Gemini AI Model State Manager
+3-Level Automatic Fallback
 
-Purpose:
-    Gemini 3.8 Flash
-        ↓ quota/rate limit
-    Gemini 3.5 Flash Lite
+Priority:
+1. gemini-3.8-flash
+2. gemini-3.5-flash-lite
+3. gemini-3.1-flash-lite
 
-Features:
-    - Global quota lock
-    - Persistent lock across bot restarts
-    - Automatic fallback
-    - Automatic unlock after reset time
-    - Save state to data/ai_model_state.json
-============================================================
+If all models are temporarily unavailable, the system waits
+until the appropriate cooldown/reset time.
 """
 
+from __future__ import annotations
+
+import json
 import os
 import re
-import json
-
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 
 # ============================================================
-# MODELS
+# MODEL CONFIGURATION
 # ============================================================
 
 PRIMARY_MODEL = "gemini-3.8-flash"
-
 FALLBACK_MODEL = "gemini-3.5-flash-lite"
+SECOND_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 
-
-# ============================================================
-# STATE FILE
-# ============================================================
-
-BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
-
-DATA_DIR = os.path.join(
-    BASE_DIR,
-    "data"
+MODEL_CHAIN = (
+    PRIMARY_MODEL,
+    FALLBACK_MODEL,
+    SECOND_FALLBACK_MODEL,
 )
 
 STATE_FILE = os.path.join(
-    DATA_DIR,
-    "ai_model_state.json"
+    os.path.dirname(os.path.dirname(__file__)),
+    "data",
+    "ai_model_state.json",
 )
 
 
 # ============================================================
-# GLOBAL STATE
+# DEFAULT COOLDOWNS
+# ============================================================
+
+DEFAULT_RPM_COOLDOWN_SECONDS = 60
+DEFAULT_503_COOLDOWN_SECONDS = 15 * 60
+DEFAULT_QUOTA_COOLDOWN_SECONDS = 15 * 60 * 60
+
+
+# ============================================================
+# BACKWARD COMPATIBILITY
 # ============================================================
 
 PRIMARY_QUOTA_LOCKED = False
-
-PRIMARY_QUOTA_RESET_TIME = None
-
-
-# ============================================================
-# ENSURE DATA DIRECTORY
-# ============================================================
-
-def ensure_data_directory():
-
-    os.makedirs(
-        DATA_DIR,
-        exist_ok=True
-    )
+PRIMARY_QUOTA_RESET_TIME: Optional[float] = None
 
 
 # ============================================================
-# SAVE STATE
+# MODEL STATE
 # ============================================================
 
-def save_state():
+MODEL_LOCKED: Dict[str, bool] = {
+    PRIMARY_MODEL: False,
+    FALLBACK_MODEL: False,
+    SECOND_FALLBACK_MODEL: False,
+}
 
-    ensure_data_directory()
+MODEL_RESET_TIME: Dict[str, Optional[float]] = {
+    PRIMARY_MODEL: None,
+    FALLBACK_MODEL: None,
+    SECOND_FALLBACK_MODEL: None,
+}
 
-    state = {
-        "primary_model": PRIMARY_MODEL,
-        "fallback_model": FALLBACK_MODEL,
-        "primary_quota_locked": PRIMARY_QUOTA_LOCKED,
-        "primary_quota_reset_time": (
-            PRIMARY_QUOTA_RESET_TIME.isoformat()
-            if PRIMARY_QUOTA_RESET_TIME
-            else None
-        ),
-        "updated_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
-    }
+MODEL_LAST_ERROR: Dict[str, str] = {
+    PRIMARY_MODEL: "",
+    FALLBACK_MODEL: "",
+    SECOND_FALLBACK_MODEL: "",
+}
 
-    temp_file = STATE_FILE + ".tmp"
+
+# ============================================================
+# INTERNAL HELPERS
+# ============================================================
+
+def _ensure_data_directory() -> None:
+    """Create data directory if it does not exist."""
+    data_dir = os.path.dirname(STATE_FILE)
+
+    if data_dir:
+        os.makedirs(data_dir, exist_ok=True)
+
+
+def _now() -> float:
+    """Return current Unix timestamp."""
+    return time.time()
+
+
+def _iso_from_timestamp(
+    timestamp: Optional[float],
+) -> Optional[str]:
+    """Convert timestamp to readable UTC ISO format."""
+    if timestamp is None:
+        return None
 
     try:
+        return datetime.fromtimestamp(
+            timestamp,
+            tz=timezone.utc,
+        ).isoformat()
+    except Exception:
+        return None
+
+
+def _timestamp_from_iso(
+    value: Any,
+) -> Optional[float]:
+    """Convert ISO timestamp to Unix timestamp."""
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(
+            str(value)
+        )
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(
+                tzinfo=timezone.utc
+            )
+
+        return parsed.timestamp()
+
+    except Exception:
+        return None
+
+
+def _safe_int(
+    value: Any,
+    default: int,
+) -> int:
+    """Convert value to int safely."""
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _normalize_model_name(
+    model_name: str,
+) -> str:
+    """Normalize Gemini model name."""
+    if not model_name:
+        return ""
+
+    return str(model_name).strip()
+
+
+# ============================================================
+# STATE SAVE / LOAD
+# ============================================================
+
+def _save_state() -> None:
+    """Save model state to JSON."""
+    global PRIMARY_QUOTA_LOCKED
+    global PRIMARY_QUOTA_RESET_TIME
+
+    try:
+        _ensure_data_directory()
+
+        data = {
+            "version": 3,
+            "updated_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+            "models": {
+                model: {
+                    "locked": MODEL_LOCKED.get(
+                        model,
+                        False,
+                    ),
+                    "reset_time": _iso_from_timestamp(
+                        MODEL_RESET_TIME.get(model)
+                    ),
+                    "last_error": MODEL_LAST_ERROR.get(
+                        model,
+                        "",
+                    ),
+                }
+                for model in MODEL_CHAIN
+            },
+
+            # Backward-compatible fields
+            "primary_quota_locked": (
+                PRIMARY_QUOTA_LOCKED
+            ),
+            "primary_quota_reset_time": (
+                _iso_from_timestamp(
+                    PRIMARY_QUOTA_RESET_TIME
+                )
+            ),
+        }
+
+        temp_file = STATE_FILE + ".tmp"
 
         with open(
             temp_file,
             "w",
-            encoding="utf-8"
+            encoding="utf-8",
         ) as file:
-
             json.dump(
-                state,
+                data,
                 file,
-                indent=4,
-                ensure_ascii=False
+                indent=2,
+                ensure_ascii=False,
             )
 
-        # Replace old state safely
         os.replace(
             temp_file,
-            STATE_FILE
+            STATE_FILE,
         )
 
-    except Exception as error:
-
-        print(
-            f"⚠️ Could not save AI state: {error}"
-        )
-
-        try:
-
-            if os.path.exists(
-                temp_file
-            ):
-
-                os.remove(
-                    temp_file
-                )
-
-        except Exception:
-            pass
+    except Exception:
+        # State persistence must never crash the bot.
+        pass
 
 
-# ============================================================
-# LOAD STATE
-# ============================================================
-
-def load_state():
-
+def _load_state() -> None:
+    """Load saved model state."""
     global PRIMARY_QUOTA_LOCKED
     global PRIMARY_QUOTA_RESET_TIME
 
-    if not os.path.exists(
-        STATE_FILE
-    ):
-
+    if not os.path.exists(STATE_FILE):
         return
 
     try:
-
         with open(
             STATE_FILE,
             "r",
-            encoding="utf-8"
+            encoding="utf-8",
         ) as file:
+            data = json.load(file)
 
-            state = json.load(
-                file
-            )
-
-        PRIMARY_QUOTA_LOCKED = bool(
-            state.get(
-                "primary_quota_locked",
-                False
-            )
+        models_data = data.get(
+            "models",
+            {},
         )
 
-        reset_time = state.get(
+        if isinstance(
+            models_data,
+            dict,
+        ):
+            for model in MODEL_CHAIN:
+                model_data = models_data.get(
+                    model,
+                    {},
+                )
+
+                if not isinstance(
+                    model_data,
+                    dict,
+                ):
+                    continue
+
+                MODEL_LOCKED[model] = bool(
+                    model_data.get(
+                        "locked",
+                        False,
+                    )
+                )
+
+                MODEL_RESET_TIME[model] = (
+                    _timestamp_from_iso(
+                        model_data.get(
+                            "reset_time"
+                        )
+                    )
+                )
+
+                MODEL_LAST_ERROR[model] = str(
+                    model_data.get(
+                        "last_error",
+                        "",
+                    )
+                )
+
+        # Backward compatibility with old state files
+        old_locked = data.get(
+            "primary_quota_locked"
+        )
+
+        if old_locked is not None:
+            PRIMARY_QUOTA_LOCKED = bool(
+                old_locked
+            )
+
+        old_reset = data.get(
             "primary_quota_reset_time"
         )
 
-        if reset_time:
-
+        if old_reset:
             PRIMARY_QUOTA_RESET_TIME = (
-                datetime.fromisoformat(
-                    reset_time
+                _timestamp_from_iso(
+                    old_reset
                 )
             )
 
-            # Ensure timezone-aware datetime
+        # Migrate old primary lock.
+        if PRIMARY_QUOTA_LOCKED:
+            MODEL_LOCKED[
+                PRIMARY_MODEL
+            ] = True
+
             if (
-                PRIMARY_QUOTA_RESET_TIME.tzinfo
+                MODEL_RESET_TIME[
+                    PRIMARY_MODEL
+                ]
                 is None
             ):
+                MODEL_RESET_TIME[
+                    PRIMARY_MODEL
+                ] = PRIMARY_QUOTA_RESET_TIME
 
-                PRIMARY_QUOTA_RESET_TIME = (
-                    PRIMARY_QUOTA_RESET_TIME.replace(
-                        tzinfo=timezone.utc
-                    )
-                )
+    except Exception:
+        # Corrupt state should not stop the bot.
+        pass
 
-        else:
 
-            PRIMARY_QUOTA_RESET_TIME = None
+# ============================================================
+# RESET EXPIRED LOCKS
+# ============================================================
 
-        # Check whether lock already expired
-        if PRIMARY_QUOTA_LOCKED:
+def _refresh_expired_locks() -> None:
+    """Unlock models whose cooldown has expired."""
+    global PRIMARY_QUOTA_LOCKED
+    global PRIMARY_QUOTA_RESET_TIME
 
-            if PRIMARY_QUOTA_RESET_TIME:
+    current_time = _now()
+    changed = False
 
-                now = datetime.now(
-                    timezone.utc
-                )
+    for model in MODEL_CHAIN:
+        if not MODEL_LOCKED.get(
+            model,
+            False,
+        ):
+            continue
 
-                if now >= PRIMARY_QUOTA_RESET_TIME:
-
-                    PRIMARY_QUOTA_LOCKED = False
-
-                    PRIMARY_QUOTA_RESET_TIME = None
-
-                    save_state()
-
-                    print(
-                        "🔓 Saved Gemini 3.8 lock "
-                        "has expired."
-                    )
-
-                else:
-
-                    print()
-                    print("=" * 60)
-                    print(
-                        "🔒 RESTORED GEMINI 3.8 QUOTA LOCK"
-                    )
-                    print("=" * 60)
-                    print(
-                        "🛟 Using fallback: "
-                        f"{FALLBACK_MODEL}"
-                    )
-                    print(
-                        "⏰ Reset: "
-                        f"{PRIMARY_QUOTA_RESET_TIME.isoformat()}"
-                    )
-                    print("=" * 60)
-
-            else:
-
-                print(
-                    "🔒 Gemini 3.8 remains locked "
-                    "(no reset time)."
-                )
-
-    except Exception as error:
-
-        print(
-            f"⚠️ Could not load AI state: {error}"
+        reset_time = MODEL_RESET_TIME.get(
+            model
         )
 
-        # Safe default
-        PRIMARY_QUOTA_LOCKED = False
-        PRIMARY_QUOTA_RESET_TIME = None
+        if reset_time is None:
+            continue
+
+        if current_time >= reset_time:
+            MODEL_LOCKED[model] = False
+            MODEL_RESET_TIME[model] = None
+            MODEL_LAST_ERROR[model] = ""
+            changed = True
+
+    # Keep backward compatibility variables synchronized.
+    PRIMARY_QUOTA_LOCKED = MODEL_LOCKED.get(
+        PRIMARY_MODEL,
+        False,
+    )
+
+    PRIMARY_QUOTA_RESET_TIME = (
+        MODEL_RESET_TIME.get(
+            PRIMARY_MODEL
+        )
+    )
+
+    if changed:
+        _save_state()
 
 
 # ============================================================
-# QUOTA ERROR DETECTION
+# INITIAL LOAD
 # ============================================================
 
-def is_quota_error(error):
+_load_state()
+_refresh_expired_locks()
 
-    if error is None:
-        return False
 
-    text = str(error).lower()
+# ============================================================
+# ERROR DETECTION
+# ============================================================
 
-    quota_words = [
-        "429",
+def _error_text(
+    error: Any,
+) -> str:
+    """Convert exception/error to lowercase text."""
+    try:
+        return str(error).lower()
+    except Exception:
+        return ""
+
+
+def is_quota_error(
+    error: Any,
+) -> bool:
+    """Detect Gemini daily quota/resource exhaustion."""
+    text = _error_text(error)
+
+    quota_keywords = (
         "resource_exhausted",
-        "quota exceeded",
         "quota",
-        "rate limit",
-        "ratelimit",
-        "generate_content_free_tier_requests",
-    ]
+        "daily limit",
+        "daily quota",
+        "quota exceeded",
+        "limit exceeded",
+        "resource exhausted",
+    )
 
     return any(
-        word in text
-        for word in quota_words
+        keyword in text
+        for keyword in quota_keywords
     )
 
 
-def is_temporary_service_error(error):
-    """Return True for Gemini temporary service overload/unavailable errors."""
-    if error is None:
-        return False
+def is_rate_limit_error(
+    error: Any,
+) -> bool:
+    """Detect RPM/rate-limit/429 errors."""
+    text = _error_text(error)
 
-    text = str(error).lower()
+    rate_keywords = (
+        "429",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "requests per minute",
+        "rpm",
+        "ratelimit",
+    )
+
+    return any(
+        keyword in text
+        for keyword in rate_keywords
+    )
+
+
+def is_server_error(
+    error: Any,
+) -> bool:
+    """Detect temporary Gemini server errors."""
+    text = _error_text(error)
+
+    server_keywords = (
+        "503",
+        "service unavailable",
+        "unavailable",
+        "overloaded",
+        "temporarily unavailable",
+        "internal server error",
+        "server error",
+    )
+
+    return any(
+        keyword in text
+        for keyword in server_keywords
+    )
+
+
+def is_model_error(
+    error: Any,
+) -> bool:
+    """Detect errors that should cause model fallback."""
     return (
-        "503" in text
-        or "unavailable" in text
-        or "service unavailable" in text
+        is_quota_error(error)
+        or is_rate_limit_error(error)
+        or is_server_error(error)
     )
 
 
 # ============================================================
-# EXTRACT RETRY SECONDS
+# RETRY TIME DETECTION
 # ============================================================
 
-def extract_retry_seconds(error):
+def _extract_retry_seconds(
+    error: Any,
+) -> Optional[int]:
+    """
+    Try to extract retry delay from Gemini error text.
 
-    if error is None:
-        return None
+    Supports examples such as:
+        retry in 37s
+        retry in 1m 20s
+        retryDelay: 45s
+    """
 
-    text = str(error)
+    text = _error_text(error)
 
-    # --------------------------------------------------------
-    # retry in 14h32m1.6s
-    # --------------------------------------------------------
-
+    # retry in Xs
     match = re.search(
-        r"retry in\s+"
-        r"(?:(\d+)h)?"
-        r"(?:(\d+)m)?"
-        r"(?:(\d+(?:\.\d+)?)s)?",
+        r"retry(?:\s+after|\s+in)?\s*[:=]?\s*"
+        r"(\d+(?:\.\d+)?)\s*s",
         text,
         re.IGNORECASE,
     )
 
     if match:
-
-        hours = int(
-            match.group(1) or 0
-        )
-
-        minutes = int(
-            match.group(2) or 0
-        )
-
-        seconds = float(
-            match.group(3) or 0
-        )
-
-        total = (
-            hours * 3600
-            + minutes * 60
-            + seconds
-        )
-
-        if total > 0:
-
-            return int(
-                total
+        try:
+            return max(
+                1,
+                int(
+                    float(
+                        match.group(1)
+                    )
+                ),
             )
+        except Exception:
+            pass
 
-    # --------------------------------------------------------
-    # retryDelay: 52323s
-    # --------------------------------------------------------
-
+    # retry in Xm Ys
     match = re.search(
-        r"retryDelay['\"]?\s*:\s*['\"]?"
-        r"(\d+(?:\.\d+)?)s",
+        r"retry(?:\s+after|\s+in)?\s*[:=]?\s*"
+        r"(\d+)\s*m(?:\s*(\d+)\s*s)?",
         text,
         re.IGNORECASE,
     )
 
     if match:
-
-        seconds = float(
-            match.group(1)
-        )
-
-        if seconds > 0:
-
-            return int(
-                seconds
+        try:
+            minutes = int(
+                match.group(1)
             )
 
-    # --------------------------------------------------------
-    # retryDelay = 52323s
-    # --------------------------------------------------------
+            seconds = int(
+                match.group(2) or 0
+            )
 
+            return max(
+                1,
+                minutes * 60 + seconds,
+            )
+        except Exception:
+            pass
+
+    # retryDelay: 45s
     match = re.search(
-        r"retryDelay\s*=\s*"
-        r"(\d+(?:\.\d+)?)s",
+        r"retrydelay[^0-9]*"
+        r"(\d+(?:\.\d+)?)\s*s",
         text,
         re.IGNORECASE,
     )
 
     if match:
-
-        seconds = float(
-            match.group(1)
-        )
-
-        if seconds > 0:
-
-            return int(
-                seconds
+        try:
+            return max(
+                1,
+                int(
+                    float(
+                        match.group(1)
+                    )
+                ),
             )
+        except Exception:
+            pass
+
+    # retryDelay: 45
+    match = re.search(
+        r"retrydelay[^0-9]*(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        try:
+            return max(
+                1,
+                int(
+                    match.group(1)
+                ),
+            )
+        except Exception:
+            pass
 
     return None
 
 
 # ============================================================
-# LOCK PRIMARY MODEL
+# COOLDOWN CALCULATION
 # ============================================================
 
-def lock_primary_model(
-    error=None,
-    default_hours=15,
-):
+def _calculate_cooldown(
+    error: Any,
+) -> int:
+    """
+    Determine model cooldown.
 
-    global PRIMARY_QUOTA_LOCKED
-    global PRIMARY_QUOTA_RESET_TIME
+    Priority:
+        1. Gemini retry delay
+        2. Daily quota
+        3. RPM/rate limit
+        4. 503/server error
+        5. Generic cooldown
+    """
 
-    # If 3.8 is already locked, keep the existing reset time.
-    # This prevents repeated errors from extending the lock.
-    if PRIMARY_QUOTA_LOCKED and PRIMARY_QUOTA_RESET_TIME is not None:
-        if datetime.now(timezone.utc) < PRIMARY_QUOTA_RESET_TIME:
-            print(
-                "🔒 Gemini 3.8 is already locked. "
-                "Keeping existing reset time."
-            )
-            return
-
-    PRIMARY_QUOTA_LOCKED = True
-
-    retry_seconds = extract_retry_seconds(
+    retry_seconds = _extract_retry_seconds(
         error
     )
 
-    if retry_seconds is None:
-        retry_seconds = (
-            default_hours * 60 * 60
+    if retry_seconds is not None:
+        return max(
+            retry_seconds,
+            5,
         )
 
-    PRIMARY_QUOTA_RESET_TIME = (
-        datetime.now(
-            timezone.utc
-        )
-        + timedelta(
-            seconds=retry_seconds
-        )
-    )
+    if is_quota_error(error):
+        return DEFAULT_QUOTA_COOLDOWN_SECONDS
 
-    # SAVE BEFORE USING FALLBACK
-    save_state()
+    if is_rate_limit_error(error):
+        return DEFAULT_RPM_COOLDOWN_SECONDS
 
-    print()
-    print("=" * 60)
-    print("🔒 GEMINI 3.8 QUOTA LOCKED")
-    print("=" * 60)
+    if is_server_error(error):
+        return DEFAULT_503_COOLDOWN_SECONDS
 
-    print(
-        "🚨 Primary model quota/rate limit detected."
-    )
-
-    print(
-        f"🛟 Using fallback: "
-        f"{FALLBACK_MODEL}"
-    )
-
-    print(
-        f"⏳ 3.8 unlock time: "
-        f"{PRIMARY_QUOTA_RESET_TIME.isoformat()}"
-    )
-
-    print(
-        f"💾 State saved: "
-        f"{STATE_FILE}"
-    )
-
-    print("=" * 60)
+    return DEFAULT_RPM_COOLDOWN_SECONDS
 
 
 # ============================================================
-# CHECK LOCK
+# MODEL LOCKING
 # ============================================================
 
-def is_primary_locked():
+def lock_model(
+    model_name: str,
+    error: Any = None,
+    cooldown_seconds: Optional[int] = None,
+) -> float:
+    """
+    Temporarily lock a Gemini model.
+
+    Returns:
+        Unix timestamp when model can be retried.
+    """
 
     global PRIMARY_QUOTA_LOCKED
     global PRIMARY_QUOTA_RESET_TIME
 
-    if not PRIMARY_QUOTA_LOCKED:
+    model_name = _normalize_model_name(
+        model_name
+    )
 
+    if model_name not in MODEL_CHAIN:
+        return _now()
+
+    if cooldown_seconds is None:
+        cooldown_seconds = _calculate_cooldown(
+            error
+        )
+
+    cooldown_seconds = max(
+        1,
+        _safe_int(
+            cooldown_seconds,
+            DEFAULT_RPM_COOLDOWN_SECONDS,
+        ),
+    )
+
+    reset_time = (
+        _now()
+        + cooldown_seconds
+    )
+
+    MODEL_LOCKED[
+        model_name
+    ] = True
+
+    MODEL_RESET_TIME[
+        model_name
+    ] = reset_time
+
+    if error is not None:
+        MODEL_LAST_ERROR[
+            model_name
+        ] = str(error)
+
+    # Backward compatibility
+    if model_name == PRIMARY_MODEL:
+        PRIMARY_QUOTA_LOCKED = True
+        PRIMARY_QUOTA_RESET_TIME = (
+            reset_time
+        )
+
+    _save_state()
+
+    return reset_time
+
+
+def unlock_model(
+    model_name: str,
+) -> bool:
+    """Manually unlock a model."""
+
+    global PRIMARY_QUOTA_LOCKED
+    global PRIMARY_QUOTA_RESET_TIME
+
+    model_name = _normalize_model_name(
+        model_name
+    )
+
+    if model_name not in MODEL_CHAIN:
         return False
 
-    # No reset time = stay locked
-    if PRIMARY_QUOTA_RESET_TIME is None:
+    MODEL_LOCKED[
+        model_name
+    ] = False
 
-        return True
+    MODEL_RESET_TIME[
+        model_name
+    ] = None
 
-    now = datetime.now(
-        timezone.utc
+    MODEL_LAST_ERROR[
+        model_name
+    ] = ""
+
+    if model_name == PRIMARY_MODEL:
+        PRIMARY_QUOTA_LOCKED = False
+        PRIMARY_QUOTA_RESET_TIME = None
+
+    _save_state()
+
+    return True
+
+
+def is_model_locked(
+    model_name: str,
+) -> bool:
+    """Check whether a model is currently locked."""
+
+    _refresh_expired_locks()
+
+    model_name = _normalize_model_name(
+        model_name
     )
 
-    # Still locked
-    if now < PRIMARY_QUOTA_RESET_TIME:
+    if model_name not in MODEL_CHAIN:
+        return False
 
-        return True
-
-    # --------------------------------------------------------
-    # RESET
-    # --------------------------------------------------------
-
-    PRIMARY_QUOTA_LOCKED = False
-
-    PRIMARY_QUOTA_RESET_TIME = None
-
-    save_state()
-
-    print()
-    print("=" * 60)
-    print("🔓 GEMINI 3.8 QUOTA LOCK RELEASED")
-    print("=" * 60)
-    print(
-        "🚀 Primary model is available again."
+    return bool(
+        MODEL_LOCKED.get(
+            model_name,
+            False,
+        )
     )
-    print("=" * 60)
-
-    return False
 
 
-# ============================================================
-# GET ACTIVE MODEL
-# ============================================================
-
-def get_active_model():
-
-    if is_primary_locked():
-
-        return FALLBACK_MODEL
-
-    return PRIMARY_MODEL
+def is_primary_locked() -> bool:
+    """Backward-compatible primary lock check."""
+    return is_model_locked(
+        PRIMARY_MODEL
+    )
 
 
 # ============================================================
-# SHOULD USE PRIMARY?
+# ACTIVE MODEL
 # ============================================================
 
-def should_use_primary():
+def get_active_model() -> str:
+    """
+    Return first available model.
 
-    return not is_primary_locked()
+    Priority:
+        3.8 → 3.5 → 3.1
+    """
+
+    _refresh_expired_locks()
+
+    for model in MODEL_CHAIN:
+        if not MODEL_LOCKED.get(
+            model,
+            False,
+        ):
+            return model
+
+    # All models locked.
+    return MODEL_CHAIN[0]
+
+
+def get_next_model(
+    current_model: str,
+) -> Optional[str]:
+    """Return model immediately after current model."""
+
+    current_model = _normalize_model_name(
+        current_model
+    )
+
+    try:
+        index = MODEL_CHAIN.index(
+            current_model
+        )
+    except ValueError:
+        return MODEL_CHAIN[0]
+
+    next_index = index + 1
+
+    if next_index >= len(
+        MODEL_CHAIN
+    ):
+        return None
+
+    return MODEL_CHAIN[
+        next_index
+    ]
+
+
+def get_available_models() -> list[str]:
+    """Return all currently available models."""
+
+    _refresh_expired_locks()
+
+    return [
+        model
+        for model in MODEL_CHAIN
+        if not MODEL_LOCKED.get(
+            model,
+            False,
+        )
+    ]
+
+
+def all_models_locked() -> bool:
+    """Return True if every model is locked."""
+
+    _refresh_expired_locks()
+
+    return all(
+        MODEL_LOCKED.get(
+            model,
+            False,
+        )
+        for model in MODEL_CHAIN
+    )
 
 
 # ============================================================
-# HANDLE MODEL ERROR
+# WAIT TIME
+# ============================================================
+
+def get_model_reset_time(
+    model_name: str,
+) -> Optional[float]:
+    """Return reset timestamp for model."""
+
+    _refresh_expired_locks()
+
+    model_name = _normalize_model_name(
+        model_name
+    )
+
+    return MODEL_RESET_TIME.get(
+        model_name
+    )
+
+
+def get_model_wait_seconds(
+    model_name: str,
+) -> int:
+    """Return remaining cooldown seconds."""
+
+    reset_time = get_model_reset_time(
+        model_name
+    )
+
+    if reset_time is None:
+        return 0
+
+    remaining = (
+        reset_time
+        - _now()
+    )
+
+    return max(
+        0,
+        int(remaining),
+    )
+
+
+def get_short_wait_message(
+    model_name: str,
+) -> str:
+    """Return human-readable wait message."""
+
+    seconds = get_model_wait_seconds(
+        model_name
+    )
+
+    if seconds <= 0:
+        return "Ready"
+
+    if seconds < 60:
+        return f"{seconds}s"
+
+    minutes = seconds // 60
+
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+    remaining_minutes = (
+        minutes % 60
+    )
+
+    if remaining_minutes:
+        return (
+            f"{hours}h "
+            f"{remaining_minutes}m"
+        )
+
+    return f"{hours}h"
+
+
+# ============================================================
+# ERROR HANDLING
 # ============================================================
 
 def handle_model_error(
-    model_name,
-    error,
-):
+    model_name: str,
+    error: Any,
+) -> Dict[str, Any]:
+    """
+    Handle Gemini model error.
 
-    if model_name != PRIMARY_MODEL:
+    The failed model is temporarily locked.
+    """
 
-        return False
+    model_name = _normalize_model_name(
+        model_name
+    )
 
-    # IMPORTANT:
-    # If Gemini 3.8 returns 429/quota/rate-limit OR 503,
-    # immediately lock 3.8 and force the system to use 3.5.
-    if is_quota_error(error) or is_temporary_service_error(error):
+    if model_name not in MODEL_CHAIN:
+        return {
+            "model": model_name,
+            "handled": False,
+            "locked": False,
+            "quota_error": False,
+            "rate_limit_error": False,
+            "server_error": False,
+            "cooldown_seconds": 0,
+            "reset_time": None,
+            "next_model": get_next_model(
+                model_name
+            ),
+        }
 
-        # Quota errors normally contain an exact retry/reset time.
-        # If 503 has no retry time, use a short 15-minute cooldown.
-        lock_primary_model(
-            error=error,
-            default_hours=0.25
-            if is_temporary_service_error(error)
-            and not is_quota_error(error)
-            else 15,
+    quota_error = is_quota_error(
+        error
+    )
+
+    rate_limit_error = (
+        is_rate_limit_error(
+            error
+        )
+    )
+
+    server_error = is_server_error(
+        error
+    )
+
+    should_lock = (
+        quota_error
+        or rate_limit_error
+        or server_error
+    )
+
+    if should_lock:
+        cooldown_seconds = (
+            _calculate_cooldown(
+                error
+            )
         )
 
-        return True
+    else:
+        # Generic error.
+        cooldown_seconds = 15
 
-    return False
+    reset_time = lock_model(
+        model_name=model_name,
+        error=error,
+        cooldown_seconds=cooldown_seconds,
+    )
+
+    next_model = None
+
+    # Find next available model strictly AFTER the failed model.
+    # Never move backward in MODEL_CHAIN.
+    try:
+        failed_index = MODEL_CHAIN.index(model_name)
+    except ValueError:
+        failed_index = -1
+
+    for candidate in MODEL_CHAIN[failed_index + 1:]:
+        if not is_model_locked(candidate):
+            next_model = candidate
+            break
+
+    return {
+        "model": model_name,
+        "handled": True,
+        "locked": True,
+        "quota_error": quota_error,
+        "rate_limit_error": rate_limit_error,
+        "server_error": server_error,
+        "cooldown_seconds": cooldown_seconds,
+        "reset_time": reset_time,
+        "reset_time_iso": (
+            _iso_from_timestamp(
+                reset_time
+            )
+        ),
+        "next_model": next_model,
+        "all_models_locked": (
+            all_models_locked()
+        ),
+    }
 
 
-# ============================================================
-# PRIMARY FAILURE → FALLBACK
-# ============================================================
+def fallback_after_model_error(
+    model_name: str,
+    error: Any,
+) -> Optional[str]:
+    """Lock failed model and return next available model."""
 
-def fallback_after_primary_error(error):
+    handle_model_error(
+        model_name,
+        error,
+    )
+
+    return get_available_fallback(
+        failed_model=model_name
+    )
+
+
+def fallback_after_primary_error(
+    error: Any,
+) -> Optional[str]:
     """
-    Handle a Gemini 3.8 failure and return the model to use next.
-
-    Returns:
-        gemini-3.5-flash-lite when 3.8 quota/rate-limit/503 is detected.
+    Backward-compatible helper for primary model.
     """
-    handled = handle_model_error(
+
+    return fallback_after_model_error(
         PRIMARY_MODEL,
         error,
     )
 
-    if handled:
-        return FALLBACK_MODEL
 
-    return get_active_model()
+def get_available_fallback(
+    failed_model: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return the next available model strictly after failed_model.
+
+    Fallback is one-way only:
+        3.8 -> 3.5 -> 3.1 -> STOP
+
+    A fallback can never move backward to an earlier model.
+    """
+
+    _refresh_expired_locks()
+
+    failed_model = _normalize_model_name(
+        failed_model or ""
+    )
+
+    # No failed model supplied: return the first available model.
+    if not failed_model:
+        for model in MODEL_CHAIN:
+            if not MODEL_LOCKED.get(model, False):
+                return model
+        return None
+
+    try:
+        failed_index = MODEL_CHAIN.index(failed_model)
+    except ValueError:
+        return None
+
+    # IMPORTANT: only inspect models AFTER failed_model.
+    for model in MODEL_CHAIN[failed_index + 1:]:
+        if not MODEL_LOCKED.get(model, False):
+            return model
+
+    return None
+
+
+# ============================================================
+# FORCE RESET
+# ============================================================
+
+def reset_all_models() -> None:
+    """Unlock all Gemini models."""
+
+    global PRIMARY_QUOTA_LOCKED
+    global PRIMARY_QUOTA_RESET_TIME
+
+    for model in MODEL_CHAIN:
+        MODEL_LOCKED[
+            model
+        ] = False
+
+        MODEL_RESET_TIME[
+            model
+        ] = None
+
+        MODEL_LAST_ERROR[
+            model
+        ] = ""
+
+    PRIMARY_QUOTA_LOCKED = False
+    PRIMARY_QUOTA_RESET_TIME = None
+
+    _save_state()
 
 
 # ============================================================
 # STATUS
 # ============================================================
 
-def get_model_status():
+def get_model_status(
+    model_name: str,
+) -> Dict[str, Any]:
+    """Return detailed status for one model."""
 
-    locked = is_primary_locked()
+    _refresh_expired_locks()
 
-    if locked:
+    model_name = _normalize_model_name(
+        model_name
+    )
 
-        active_model = FALLBACK_MODEL
+    if model_name not in MODEL_CHAIN:
+        return {
+            "model": model_name,
+            "known": False,
+            "locked": False,
+            "available": False,
+            "wait_seconds": 0,
+            "wait": "Unknown",
+            "reset_time": None,
+            "last_error": "",
+        }
 
-    else:
-
-        active_model = PRIMARY_MODEL
-
-    reset_time = None
-
-    if PRIMARY_QUOTA_RESET_TIME:
-
-        reset_time = (
-            PRIMARY_QUOTA_RESET_TIME.isoformat()
-        )
+    locked = MODEL_LOCKED.get(
+        model_name,
+        False,
+    )
 
     return {
-        "primary_model": PRIMARY_MODEL,
-        "fallback_model": FALLBACK_MODEL,
-        "primary_locked": locked,
-        "active_model": active_model,
-        "reset_time": reset_time,
-        "state_file": STATE_FILE,
+        "model": model_name,
+        "known": True,
+        "locked": locked,
+        "available": not locked,
+        "wait_seconds": (
+            get_model_wait_seconds(
+                model_name
+            )
+        ),
+        "wait": (
+            get_short_wait_message(
+                model_name
+            )
+        ),
+        "reset_time": (
+            _iso_from_timestamp(
+                MODEL_RESET_TIME.get(
+                    model_name
+                )
+            )
+        ),
+        "last_error": (
+            MODEL_LAST_ERROR.get(
+                model_name,
+                "",
+            )
+        ),
     }
 
 
-# ============================================================
-# PRINT STATUS
-# ============================================================
+def get_status() -> Dict[str, Any]:
+    """Return complete Gemini model status."""
 
-def print_model_status():
+    _refresh_expired_locks()
 
-    status = get_model_status()
+    statuses = {
+        model: get_model_status(
+            model
+        )
+        for model in MODEL_CHAIN
+    }
+
+    active_model = get_active_model()
+
+    return {
+        "version": 3,
+        "primary_model": PRIMARY_MODEL,
+        "fallback_model": FALLBACK_MODEL,
+        "second_fallback_model": (
+            SECOND_FALLBACK_MODEL
+        ),
+        "model_chain": list(
+            MODEL_CHAIN
+        ),
+        "active_model": active_model,
+        "all_models_locked": (
+            all_models_locked()
+        ),
+        "models": statuses,
+    }
+
+
+def print_status() -> None:
+    """Print model status."""
+
+    status = get_status()
 
     print()
     print("=" * 60)
-    print("🤖 KHMER NEWS 24 — AI MODEL STATUS")
+    print("GEMINI AI MODEL STATUS")
     print("=" * 60)
 
     print(
-        f"🚀 Primary: "
-        f"{status['primary_model']}"
-    )
-
-    print(
-        f"🛟 Fallback: "
-        f"{status['fallback_model']}"
-    )
-
-    print(
-        f"🤖 Active: "
+        f"Active Model: "
         f"{status['active_model']}"
     )
 
-    print(
-        f"🔒 Primary locked: "
-        f"{status['primary_locked']}"
-    )
+    print()
 
-    if status["reset_time"]:
+    for model in MODEL_CHAIN:
+        model_status = status[
+            "models"
+        ][model]
+
+        if model_status[
+            "available"
+        ]:
+            state = "AVAILABLE"
+        else:
+            state = (
+                "LOCKED "
+                f"({model_status['wait']})"
+            )
 
         print(
-            f"⏳ Reset: "
-            f"{status['reset_time']}"
+            f"{model:<30} "
+            f"{state}"
         )
 
-    print(
-        f"💾 State file: "
-        f"{status['state_file']}"
-    )
-
     print("=" * 60)
+    print()
 
 
 # ============================================================
-# LOAD SAVED STATE WHEN MODULE STARTS
+# COMPATIBILITY HELPERS
 # ============================================================
 
-load_state()
+def get_primary_model() -> str:
+    """Return primary Gemini model."""
+    return PRIMARY_MODEL
+
+
+def get_fallback_model() -> str:
+    """Return first fallback Gemini model."""
+    return FALLBACK_MODEL
+
+
+def get_second_fallback_model() -> str:
+    """Return second fallback Gemini model."""
+    return SECOND_FALLBACK_MODEL
 
 
 # ============================================================
@@ -693,26 +1278,28 @@ load_state()
 
 if __name__ == "__main__":
 
-    print_model_status()
+    print_status()
 
-    fake_error = """
-    429 RESOURCE_EXHAUSTED
-    Quota exceeded
-    Please retry in 2h30m10s.
-    """
+    print("Model Chain:")
 
-    print()
-    print("🧪 Testing quota lock...")
-
-    handle_model_error(
-        PRIMARY_MODEL,
-        fake_error
-    )
-
-    print_model_status()
+    for index, model in enumerate(
+        MODEL_CHAIN,
+        start=1,
+    ):
+        print(
+            f"{index}. {model}"
+        )
 
     print()
+
     print(
-        f"🤖 Active model: "
+        f"Active model: "
         f"{get_active_model()}"
     )
+
+    print(
+        f"All models locked: "
+        f"{all_models_locked()}"
+    )
+
+    print()

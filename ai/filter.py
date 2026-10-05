@@ -7,7 +7,9 @@ Supports:
 - Football-specific filtering
 - Gemini 3.8 primary
 - Gemini 3.5 fallback
-- Global quota lock
+- Gemini 3.1 second fallback
+- Automatic model locking
+- Automatic model fallback
 """
 
 import os
@@ -22,8 +24,11 @@ from ai.prompts import get_filter_prompt
 from ai.model_state import (
     PRIMARY_MODEL,
     FALLBACK_MODEL,
+    SECOND_FALLBACK_MODEL,
+    MODEL_CHAIN,
     get_active_model,
-    is_primary_locked,
+    is_model_locked,
+    all_models_locked,
     handle_model_error,
 )
 
@@ -37,7 +42,9 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY not found in .env")
+    raise RuntimeError(
+        "GEMINI_API_KEY not found in .env"
+    )
 
 
 client = genai.Client(
@@ -45,13 +52,16 @@ client = genai.Client(
 )
 
 
-# Normal errors get at most 1 retry.
-# 429/quota and 503 errors switch to fallback immediately.
+# Normal errors get limited retries.
+# Quota / rate-limit / 503 errors switch
+# to the next model immediately.
 MAX_RETRIES = 2
 RETRY_DELAY_SECONDS = 3
 
+
 # Normal news minimum score
 DEFAULT_MIN_SCORE = 60
+
 
 # Football minimum score
 FOOTBALL_MIN_SCORE = 40
@@ -286,33 +296,57 @@ def call_gemini(
 
 
 # ==========================================
-# PRIMARY MODEL
+# MODEL ERROR CHECK
 # ==========================================
 
-def try_primary_model(
+def is_temporary_model_error(error):
+
+    text = str(error).lower()
+
+    return (
+        "429" in text
+        or "resource_exhausted" in text
+        or "quota" in text
+        or "rate limit" in text
+        or "rate_limit" in text
+        or "too many requests" in text
+        or "503" in text
+        or "unavailable" in text
+        or "overloaded" in text
+    )
+
+
+# ==========================================
+# TRY ONE MODEL
+# ==========================================
+
+def try_model(
+    model,
     prompt
 ):
+    """
+    Try one Gemini model.
+
+    Returns:
+        AI result dictionary
+        OR None when the model is unavailable.
+    """
 
     # --------------------------------------
-    # Check global quota lock
+    # Check model lock
     # --------------------------------------
 
-    if is_primary_locked():
+    if is_model_locked(model):
 
         print(
-            f"🔒 {PRIMARY_MODEL} "
-            f"is currently locked."
-        )
-
-        print(
-            f"🛟 Using {FALLBACK_MODEL} "
-            f"directly."
+            f"🔒 {model} is currently locked."
         )
 
         return None
 
+
     # --------------------------------------
-    # Primary attempts
+    # Attempts
     # --------------------------------------
 
     for attempt in range(
@@ -324,13 +358,13 @@ def try_primary_model(
 
             print(
                 f"🤖 AI Filter | "
-                f"{PRIMARY_MODEL} | "
+                f"{model} | "
                 f"Attempt "
                 f"{attempt}/{MAX_RETRIES}"
             )
 
             response_text = call_gemini(
-                PRIMARY_MODEL,
+                model,
                 prompt
             )
 
@@ -339,7 +373,8 @@ def try_primary_model(
             )
 
             print(
-                f"✅ AI Result: "
+                f"✅ AI Result | "
+                f"{model} | "
                 f"score={result['score']} "
                 f"important="
                 f"{result['important']}"
@@ -347,74 +382,65 @@ def try_primary_model(
 
             return result
 
+
         except Exception as e:
 
-            error_text = str(e)
-
             print(
-                f"⚠️ Primary AI error: "
-                f"{e}"
+                f"⚠️ AI Filter error | "
+                f"{model} | {e}"
             )
 
+
             # ----------------------------------
-            # Tell global model state
+            # Update global model state
             # ----------------------------------
 
-            quota_error = handle_model_error(
-                PRIMARY_MODEL,
+            state_result = handle_model_error(
+                model,
                 e
             )
 
+
             # ----------------------------------
-            # 429 QUOTA / RATE LIMIT
+            # Temporary model problem
             # ----------------------------------
 
-            if quota_error:
+            if is_temporary_model_error(e):
 
-                print(
-                    "🚨 Gemini quota/rate "
-                    "limit detected."
+                cooldown = state_result.get(
+                    "cooldown_seconds",
+                    0
+                )
+
+                next_model = state_result.get(
+                    "next_model"
                 )
 
                 print(
-                    f"🔒 Locking "
-                    f"{PRIMARY_MODEL}"
+                    f"🔒 {model} locked "
+                    f"for approximately "
+                    f"{cooldown}s."
                 )
 
-                print(
-                    f"🛟 Switching immediately "
-                    f"to {FALLBACK_MODEL}"
-                )
+                if next_model:
+
+                    print(
+                        f"🛟 Next AI model → "
+                        f"{next_model}"
+                    )
+
+                else:
+
+                    print(
+                        "⏳ No other Gemini "
+                        "model currently available."
+                    )
 
                 return None
 
-            # ----------------------------------
-            # 503 MODEL UNAVAILABLE
-            # ----------------------------------
-            # 503 usually means the model is
-            # temporarily overloaded/unavailable.
-            # Do NOT waste 3 requests on 3.8.
-            # Switch to fallback immediately.
-
-            if (
-                "503" in error_text
-                or "unavailable" in error_text.lower()
-            ):
-
-                print(
-                    f"⚠️ {PRIMARY_MODEL} is "
-                    f"temporarily unavailable (503)."
-                )
-
-                print(
-                    f"🛟 Switching immediately "
-                    f"to {FALLBACK_MODEL}"
-                )
-
-                return None
 
             # ----------------------------------
-            # OTHER NORMAL ERROR
+            # Normal error
             # ----------------------------------
 
             if attempt < MAX_RETRIES:
@@ -428,75 +454,173 @@ def try_primary_model(
                     RETRY_DELAY_SECONDS
                 )
 
+            else:
+
+                print(
+                    f"❌ {model} failed "
+                    f"after "
+                    f"{MAX_RETRIES} attempts."
+                )
+
+
     return None
 
 
 # ==========================================
-# FALLBACK MODEL
+# TRY ALL GEMINI MODELS
 # ==========================================
+
+def use_ai_model_chain(
+    prompt
+):
+    """
+    Try Gemini models in priority order:
+
+        3.8
+        ↓
+        3.5
+        ↓
+        3.1
+        ↓
+        wait / unavailable
+
+    This is the main AI fallback system.
+    """
+
+    print()
+    print(
+        "🔄 Gemini AI Model Chain"
+    )
+
+    print(
+        f"   1️⃣ {PRIMARY_MODEL}"
+    )
+
+    print(
+        f"   2️⃣ {FALLBACK_MODEL}"
+    )
+
+    print(
+        f"   3️⃣ {SECOND_FALLBACK_MODEL}"
+    )
+
+    print()
+
+
+    # --------------------------------------
+    # Check active model
+    # --------------------------------------
+
+    active_model = get_active_model()
+
+    print(
+        f"🧠 Active Gemini model: "
+        f"{active_model}"
+    )
+
+
+    # --------------------------------------
+    # Try models in configured priority
+    # --------------------------------------
+
+    for model in MODEL_CHAIN:
+
+        if is_model_locked(model):
+
+            print(
+                f"⏭️ Skipping locked model: "
+                f"{model}"
+            )
+
+            continue
+
+
+        result = try_model(
+            model,
+            prompt
+        )
+
+
+        if result is not None:
+
+            print(
+                f"✅ AI Filter succeeded "
+                f"with {model}"
+            )
+
+            return result
+
+
+    # --------------------------------------
+    # All models unavailable
+    # --------------------------------------
+
+    if all_models_locked():
+
+        print(
+            "⏳ ALL GEMINI MODELS ARE "
+            "CURRENTLY LOCKED."
+        )
+
+        print(
+            "⏳ Waiting for cooldown/reset."
+        )
+
+
+    else:
+
+        print(
+            "❌ All available Gemini "
+            "models failed."
+        )
+
+
+    return {
+        "important": False,
+        "score": 0,
+        "reason": (
+            "AI filter temporarily "
+            "unavailable"
+        )
+    }
+
+
+# ==========================================
+# BACKWARD COMPATIBILITY
+# ==========================================
+
+def try_primary_model(
+    prompt
+):
+    """
+    Backward-compatible function.
+
+    Existing code can still call:
+        try_primary_model(prompt)
+
+    It now uses the full 3-model chain.
+    """
+
+    return use_ai_model_chain(
+        prompt
+    )
+
 
 def use_fallback_model(
     prompt
 ):
+    """
+    Backward-compatible function.
 
-    try:
+    Existing code can still call:
+        use_fallback_model(prompt)
 
-        print(
-            f"🤖 Fallback AI | "
-            f"{FALLBACK_MODEL}"
-        )
+    It now uses the complete fallback chain.
+    """
 
-        response_text = call_gemini(
-            FALLBACK_MODEL,
-            prompt
-        )
-
-        result = parse_ai_result(
-            response_text
-        )
-
-        print(
-            f"✅ Fallback AI Result: "
-            f"score={result['score']} "
-            f"important="
-            f"{result['important']}"
-        )
-
-        return result
-
-    except Exception as e:
-
-        error_text = str(e)
-
-        print(
-            f"❌ Fallback AI error: "
-            f"{e}"
-        )
-
-        # IMPORTANT:
-        # 3.5 is the fallback for 3.8. If 3.5 itself is
-        # rate-limited/unavailable, do not retry immediately.
-        if (
-            "429" in error_text
-            or "RESOURCE_EXHAUSTED" in error_text
-            or "quota" in error_text.lower()
-            or "rate limit" in error_text.lower()
-            or "503" in error_text
-            or "UNAVAILABLE" in error_text.upper()
-        ):
-            print(
-                "🛑 Fallback model is temporarily "
-                "rate-limited/unavailable. "
-                "Skipping this article safely."
-            )
-
-        return {
-            "important": False,
-            "score": 0,
-            "reason": (
-                "AI filter unavailable"
-            )
-        }
+    return use_ai_model_chain(
+        prompt
+    )
 
 
 # ==========================================
@@ -547,6 +671,7 @@ def apply_football_rules(
         + summary
     ).lower()
 
+
     # --------------------------------------
     # 1. Reject obvious gambling content
     # --------------------------------------
@@ -564,6 +689,7 @@ def apply_football_rules(
             )
 
             return result
+
 
     # --------------------------------------
     # 2. Original AI score
@@ -585,6 +711,7 @@ def apply_football_rules(
 
         original_score = 0
 
+
     original_score = max(
         0,
         min(
@@ -592,6 +719,7 @@ def apply_football_rules(
             original_score
         )
     )
+
 
     # --------------------------------------
     # 3. Very low-quality article
@@ -613,19 +741,10 @@ def apply_football_rules(
 
         return result
 
+
     # --------------------------------------
     # 4. Useful football article
     # --------------------------------------
-    #
-    # Example:
-    # Bellingham = 35
-    # Final = 40
-    #
-    # Scotland = 30
-    # Final = 40
-    #
-    # This allows player/team stories
-    # even when they are not breaking news.
 
     if (
         original_score >= 30
@@ -647,6 +766,7 @@ def apply_football_rules(
         )
 
         return result
+
 
     # --------------------------------------
     # 5. Good football score
@@ -682,6 +802,7 @@ def filter_article(
         )
     ).lower().strip()
 
+
     prompt = get_filter_prompt(
         title=article.get(
             "title",
@@ -698,6 +819,7 @@ def filter_article(
         )
     )
 
+
     # ======================================
     # CHECK ACTIVE MODEL
     # ======================================
@@ -709,46 +831,15 @@ def filter_article(
         f"{active_model}"
     )
 
+
     # ======================================
-    # IF PRIMARY IS LOCKED
-    # USE FALLBACK DIRECTLY
+    # USE FULL MODEL CHAIN
     # ======================================
 
-    if is_primary_locked():
+    result = use_ai_model_chain(
+        prompt
+    )
 
-        print(
-            f"🔒 {PRIMARY_MODEL} "
-            f"quota locked."
-        )
-
-        result = use_fallback_model(
-            prompt
-        )
-
-    else:
-
-        # ==================================
-        # TRY PRIMARY
-        # ==================================
-
-        result = try_primary_model(
-            prompt
-        )
-
-        # ==================================
-        # FALLBACK
-        # ==================================
-
-        if result is None:
-
-            print(
-                f"🛟 Primary unavailable → "
-                f"using {FALLBACK_MODEL}"
-            )
-
-            result = use_fallback_model(
-                prompt
-            )
 
     # ======================================
     # FOOTBALL SPECIAL RULE
@@ -767,6 +858,7 @@ def filter_article(
             f"important={result['important']}"
         )
 
+
     return result
 
 
@@ -781,13 +873,16 @@ def filter_articles(
 
     selected = []
 
+
     for article in articles:
 
         result = filter_article(
             article
         )
 
+
         item = article.copy()
+
 
         item["ai_important"] = (
             result["important"]
@@ -801,6 +896,7 @@ def filter_articles(
             result["reason"]
         )
 
+
         # ----------------------------------
         # Category-specific threshold
         # ----------------------------------
@@ -811,6 +907,7 @@ def filter_articles(
                 ""
             )
         ).lower().strip()
+
 
         if category == "football":
 
@@ -823,6 +920,7 @@ def filter_articles(
             required_score = (
                 min_score
             )
+
 
         # ----------------------------------
         # Final selection
@@ -837,5 +935,6 @@ def filter_articles(
             selected.append(
                 item
             )
+
 
     return selected

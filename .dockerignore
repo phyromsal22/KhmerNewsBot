@@ -5,5 +5,4 @@ __pycache__
 backup
 news.db
 test_*.py
-*_old.py
 *_backup*.py

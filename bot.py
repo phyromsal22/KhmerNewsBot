@@ -1,5 +1,6 @@
 import os
 import html
+import re
 import asyncio
 import json
 import urllib.request
@@ -568,6 +569,56 @@ def find_ai_result(article, index, results):
 
 
 # ============================================================
+# CLEAN AI SUMMARY
+# ============================================================
+
+def clean_summary_kh(summary_text, title_kh=""):
+    """Remove duplicate labels/title/source from the AI summary.
+
+    The Telegram formatter adds the article title, source, time and URL
+    separately, so those fields should not be repeated inside the summary.
+    """
+    text = str(summary_text or "").strip()
+    if not text:
+        return ""
+
+    # Normalize line endings and whitespace.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Remove any title label accidentally returned by the model.
+    text = re.sub(r"(?im)^\s*(?:\*\*)?ចំណងជើង\s*៖(?:\*\*)?\s*", "", text)
+
+    # Remove a standalone repeated copy of the displayed title.
+    title_norm = re.sub(r"[*_`]+", "", str(title_kh or "")).strip()
+    if title_norm:
+        kept_lines = []
+        for line in text.split("\n"):
+            line_norm = re.sub(r"[*_`]+", "", line).strip()
+            if line_norm and line_norm == title_norm:
+                continue
+            kept_lines.append(line)
+        text = "\n".join(kept_lines)
+
+    # The source is rendered by format_news below; remove an AI-generated
+    # source section to avoid displaying it twice.
+    text = re.sub(r"(?is)\n\s*(?:\*\*)?ប្រភព\s*៖(?:\*\*)?.*$", "", text)
+
+    # Collapse repeated summary headings, preserving just one at the start.
+    text = re.sub(
+        r"(?im)^\s*(?:\*\*)?សេចក្តីសង្ខេប\s*៖(?:\*\*)?\s*\n?",
+        "",
+        text,
+    )
+    text = text.strip()
+    if text:
+        text = "សេចក្តីសង្ខេប៖\n" + text
+
+    # Avoid repeated blank lines.
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
+# ============================================================
 # FORMAT NEWS
 # ============================================================
 
@@ -589,7 +640,10 @@ def format_news(
         return None
 
     title_kh = str(ai_result.get("title_kh") or "").strip()
-    summary_kh = str(ai_result.get("summary_kh") or "").strip()
+    summary_kh = clean_summary_kh(
+        ai_result.get("summary_kh") or "",
+        title_kh=title_kh,
+    )
 
     if not is_khmer_text(title_kh, min_khmer=4, ratio=0.25):
         print(f"⚠️ Skip: invalid Khmer title: {title_kh[:120]}")
